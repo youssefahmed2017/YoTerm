@@ -12,11 +12,13 @@ images**, both sampled on the GPU rather than faked with block characters.
 python app.py
 ```
 
+It ships with **JetBrains Mono** so it looks the same on every machine.
+
 ## Highlights
 
 - **GPU rendering** — a ModernGL pipeline with one instanced quad per cell, a
   glyph atlas shared across tabs, and damage tracking so an idle screen costs no
-  frames. A blinking caret is a 48-byte buffer write, not a full-screen rebuild.
+  frames. Gradient text and images are their own small GPU passes.
 - **VT100 / VT220 conformance** — cursor movement, scroll regions, origin mode,
   tabs, auto-wrap, character sets (incl. DEC line-drawing and single/locking
   shifts), selective erase (DECSCA/DECSED/DECSEL), soft reset (DECSTR), device
@@ -26,7 +28,8 @@ python app.py
   marks composed via NFC, and OS-quality color emoji.
 - **Full color** — 16 / 256 / 24-bit truecolor, plus the usual SGR attributes
   (bold, dim, italic, underline, reverse, strike, conceal, and optional blink).
-- **Windows-Terminal-style tabs** on the native window frame, with OSC 0/2 titles.
+- **Windows-Terminal-style tabs** on the native window frame, with a dropdown
+  menu and an in-app settings dialog. OSC 0/2 set tab titles.
 - **Human-editable settings** — a real Python file at `~/.yoterm_config.py`, which
   is exactly what the in-app settings dialog (Ctrl+,) writes.
 - **YoTerm's own OSC sequences** (the `YT` namespace) — true gradients and images,
@@ -81,7 +84,7 @@ shell output ─▶ reader thread ─▶ queue ─▶ Terminal.write()  (term.py
 
 | File | Role |
 |------|------|
-| `app.py` | Qt application shell, tabs, and the ModernGL renderer. Entry point. |
+| `app.py` | Qt application shell, tabs, and the ModernGL renderer. **Entry point.** |
 | `term.py` | The terminal model: ANSI/VT parser, screen buffer, scrollback. |
 | `tools.py` | Glyph atlas, font rasterization, geometry builder, palette. |
 | `config.py` | Settings (`~/.yoterm_config.py`) as an editable dataclass. |
@@ -89,6 +92,8 @@ shell output ─▶ reader thread ─▶ queue ─▶ Terminal.write()  (term.py
 | `ytimg.py` | `YT;img` decode (Pillow) and cell-sizing. |
 | `ansi.py` | Self-checking VT100/VT220 conformance suite. |
 | `yt_seq_tests.py` | Visual demo of the `YT` gradient/image sequences. |
+| `fonts/` | Bundled JetBrains Mono (regular / bold / italic / bold-italic). |
+| `app_glfw.py` | Experimental GLFW + Dear ImGui shell (see below). |
 
 ## Requirements
 
@@ -122,3 +127,12 @@ python ansi.py --auto     # just the automatic checks
 A few LF-related checks report `skip` inside a Windows console, which rewrites
 `LF`→`CRLF` before the terminal ever sees it — that's a property of the console,
 not of YoTerm, so the suite is honest about it rather than pretending to pass.
+
+## Experimental GLFW build (`app_glfw.py`)
+
+`app_glfw.py` is an in-progress attempt to replace PySide6 (a ~370 MB dependency)
+with **GLFW + Dear ImGui** (a few MB), driving the same `term.py` model and
+ModernGL renderer. It renders text, tabs, the menu, settings, gradients and
+images — but has an unresolved rendering bug when the window is resized/maximized,
+so it isn't the shipping build yet. Shrinking the footprint is a goal for later.
+It needs `pip install glfw imgui PyOpenGL`.

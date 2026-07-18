@@ -7,3 +7,6 @@ __pycache__/
 *.pyo
 *.pyi
 
+# Dear ImGui runtime state (written by the experimental app_glfw.py)
+imgui.ini
+

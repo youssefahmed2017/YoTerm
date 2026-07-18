@@ -1,4 +1,5 @@
 import math
+import os
 from array import array
 from bisect import bisect_right
 from PIL import Image, ImageFont, ImageDraw
@@ -97,12 +98,24 @@ ATLAS_COLS = 16  # glyphs per atlas row
 
 CONSOLAS = r"C:\Windows\Fonts\consola.ttf"
 
-# Consolas style variants, indexed by (bold?1:0) + (italic?2:0).
+# JetBrains Mono ships with YoTerm (fonts/), so the terminal looks the same on
+# every machine — a modern, screen-tuned coding face rather than whatever the OS
+# happens to have. If the bundled files are ever missing we fall back to
+# Consolas so the terminal still starts.
+_FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+
+
+def _bundled(name, fallback):
+    path = os.path.join(_FONT_DIR, name)
+    return path if os.path.exists(path) else fallback
+
+
+# Text style variants, indexed by (bold?1:0) + (italic?2:0).
 STYLE_FONTS = [
-    r"C:\Windows\Fonts\consola.ttf",  # 0 regular
-    r"C:\Windows\Fonts\consolab.ttf",  # 1 bold
-    r"C:\Windows\Fonts\consolai.ttf",  # 2 italic
-    r"C:\Windows\Fonts\consolaz.ttf",  # 3 bold italic
+    _bundled("JetBrainsMono-Regular.ttf", r"C:\Windows\Fonts\consola.ttf"),
+    _bundled("JetBrainsMono-Bold.ttf", r"C:\Windows\Fonts\consolab.ttf"),
+    _bundled("JetBrainsMono-Italic.ttf", r"C:\Windows\Fonts\consolai.ttf"),
+    _bundled("JetBrainsMono-BoldItalic.ttf", r"C:\Windows\Fonts\consolaz.ttf"),
 ]
 
 # Foreground colors as RGB floats (0..1), keyed by the names term.py
