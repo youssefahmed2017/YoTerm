@@ -158,10 +158,24 @@ gradient correct later. Border and fill are composed in one pass via a second
 SDF offset by `border_width`, so a rounded border follows the same curve as
 the fill with no separate geometry.
 
-**Phase 3 — Effects.** `shadow`, `opacity`. Soft-edge falloff inside the same SDF
-pass rather than a second blurred pass. Note: *background* blur — blurring what
-is behind a zone — needs an offscreen framebuffer and is a different cost class;
-it is not in scope here.
+**Phase 3 — Effects.** ✅ Done. `shadow` and `opacity` both render.
+
+Shadow is a soft-edge falloff computed in the *same* SDF pass — no second draw,
+no blurred texture. The rendered quad is padded by exactly `shadow` px on every
+side (so the falloff has room to reach zero before the geometry's own edge,
+with no visible seam), and the fragment shader composites the content *over*
+a translucent silhouette of the same rounded shape whose alpha fades linearly
+from the content's edge outward. A zone with only `shadow` set (no `bg`, no
+`gradient`) renders as a soft shadow shape with nothing solid on top — useful
+as a pure decoration.
+
+Opacity is applied **once, to the whole composited result** (fill + border +
+shadow together) rather than baked separately into each color's alpha. That is
+what makes a translucent card cast a correspondingly faint shadow instead of a
+full-strength one — the same reasoning a UI compositor would use.
+
+Note: *background* blur — blurring what is behind a zone — needs an offscreen
+framebuffer and is a different cost class; it is not in scope here.
 
 **Phase 4 — Clipping.** Scissor for rectangular, shader-discard for rounded,
 including the glyph-batching split described above. Enables scroll views and

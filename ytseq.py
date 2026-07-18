@@ -14,19 +14,41 @@ on the screen. That graceful fallback is the reason these live in OSC.
 # (31, 93, ...) the way you'd write it in an ordinary colour escape. Kept local
 # rather than imported from term.py to avoid a circular import.
 _SGR16 = {
-    30: (0, 0, 0), 31: (128, 0, 0), 32: (0, 128, 0), 33: (128, 128, 0),
-    34: (0, 0, 128), 35: (128, 0, 128), 36: (0, 128, 128), 37: (192, 192, 192),
-    90: (128, 128, 128), 91: (255, 0, 0), 92: (0, 255, 0), 93: (255, 255, 0),
-    94: (0, 0, 255), 95: (255, 0, 255), 96: (0, 255, 255), 97: (255, 255, 255),
+    30: (0, 0, 0),
+    31: (128, 0, 0),
+    32: (0, 128, 0),
+    33: (128, 128, 0),
+    34: (0, 0, 128),
+    35: (128, 0, 128),
+    36: (0, 128, 128),
+    37: (192, 192, 192),
+    90: (128, 128, 128),
+    91: (255, 0, 0),
+    92: (0, 255, 0),
+    93: (255, 255, 0),
+    94: (0, 0, 255),
+    95: (255, 0, 255),
+    96: (0, 255, 255),
+    97: (255, 255, 255),
 }
 
 # A handful of friendly names, so `gradient;red;orange` reads the way it means.
 _NAMES = {
-    "black": (0, 0, 0), "red": (222, 56, 43), "green": (57, 181, 74),
-    "yellow": (255, 199, 6), "blue": (0, 111, 184), "magenta": (118, 38, 113),
-    "cyan": (44, 181, 233), "white": (204, 204, 204), "gray": (128, 128, 128),
-    "grey": (128, 128, 128), "orange": (255, 128, 0), "purple": (150, 0, 190),
-    "pink": (255, 105, 180), "teal": (0, 128, 128), "lime": (0, 255, 0),
+    "black": (0, 0, 0),
+    "red": (222, 56, 43),
+    "green": (57, 181, 74),
+    "yellow": (255, 199, 6),
+    "blue": (0, 111, 184),
+    "magenta": (118, 38, 113),
+    "cyan": (44, 181, 233),
+    "white": (204, 204, 204),
+    "gray": (128, 128, 128),
+    "grey": (128, 128, 128),
+    "orange": (255, 128, 0),
+    "purple": (150, 0, 190),
+    "pink": (255, 105, 180),
+    "teal": (0, 128, 128),
+    "lime": (0, 255, 0),
 }
 
 
@@ -44,7 +66,7 @@ def parse_color(text):
             h = "".join(c * 2 for c in h)
         if len(h) == 6:
             try:
-                return tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+                return tuple(int(h[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
             except ValueError:
                 return None
         return None
@@ -84,9 +106,11 @@ class GradientRun:
         for (p0, c0), (p1, c1) in zip(stops, stops[1:]):
             if p0 <= t <= p1:
                 f = 0.0 if p1 == p0 else (t - p0) / (p1 - p0)
-                return (c0[0] + (c1[0] - c0[0]) * f,
-                        c0[1] + (c1[1] - c0[1]) * f,
-                        c0[2] + (c1[2] - c0[2]) * f)
+                return (
+                    c0[0] + (c1[0] - c0[0]) * f,
+                    c0[1] + (c1[1] - c0[1]) * f,
+                    c0[2] + (c1[2] - c0[2]) * f,
+                )
         return stops[-1][1]
 
 
@@ -130,5 +154,10 @@ def make_gradient(stop_texts, opts):
     target = opts.get("target", "fg").strip().lower()
     if target not in ("fg", "bg"):
         target = "fg"
-    return GradientRun(stops, angle=angle, cycle=_truthy(opts.get("cycle", "")),
-                       speed=speed, target=target)
+    return GradientRun(
+        stops,
+        angle=angle,
+        cycle=_truthy(opts.get("cycle", "")),
+        speed=speed,
+        target=target,
+    )

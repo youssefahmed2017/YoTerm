@@ -49,11 +49,11 @@ def out(s):
     keeps what we send identical to what we wrote.
     """
     raw = getattr(sys.stdout, "buffer", None)
-    if raw is None:               # a redirected/wrapped stdout: nothing to fix
+    if raw is None:  # a redirected/wrapped stdout: nothing to fix
         sys.stdout.write(s)
         sys.stdout.flush()
         return
-    sys.stdout.flush()            # keep our bytes ordered against print()
+    sys.stdout.flush()  # keep our bytes ordered against print()
     raw.write(s.encode("utf-8", "replace"))
     raw.flush()
 
@@ -373,29 +373,34 @@ def auto_save_restore(rows):
     # or not origin mode came back — that test could never fail. Running off
     # the bottom can only be confined if origin mode is actually on.
     out(CSI + "3;8r" + CSI + "?6h")
-    out(ESC + "7")             # save while origin mode is on
-    out(CSI + "?6l")           # turn it off
-    out(ESC + "8")             # DECRC should bring origin mode back with it
+    out(ESC + "7")  # save while origin mode is on
+    out(CSI + "?6l")  # turn it off
+    out(ESC + "8")  # DECRC should bring origin mode back with it
     out(CSI + "99;1H")
-    check("DECRC restores origin mode along with the position",
-          cursor_pos(), (6, 1))         # region 3..8 is 6 rows tall
+    check(
+        "DECRC restores origin mode along with the position", cursor_pos(), (6, 1)
+    )  # region 3..8 is 6 rows tall
     out(CSI + "?6l" + CSI + "r")
 
     # SCORC is the ANSI.SYS variant and only deals in the position, so it must
     # NOT drag origin mode along the way DECRC does.
     out(CSI + "3;8r" + CSI + "?6l")
-    out(CSI + "5;1H" + CSI + "s")   # save position with origin mode off
-    out(CSI + "?6h")                # turn it on
-    out(CSI + "u")                  # SCORC: position only
+    out(CSI + "5;1H" + CSI + "s")  # save position with origin mode off
+    out(CSI + "?6h")  # turn it on
+    out(CSI + "u")  # SCORC: position only
     out(CSI + "99;1H")
-    check("SCORC restores the position without touching origin mode",
-          cursor_pos(), (6, 1))         # still confined: origin mode stayed on
+    check(
+        "SCORC restores the position without touching origin mode", cursor_pos(), (6, 1)
+    )  # still confined: origin mode stayed on
     out(CSI + "?6l" + CSI + "r")
 
     # With nothing ever saved, a VT homes the cursor.
     out(CSI + "12;30H")
-    check("ESC 7 / ESC 8 leave the cursor put when nothing moved it",
-          cursor_pos(), (12, 30))
+    check(
+        "ESC 7 / ESC 8 leave the cursor put when nothing moved it",
+        cursor_pos(),
+        (12, 30),
+    )
 
 
 def auto_scroll_region(rows):
@@ -663,12 +668,14 @@ def bare_lf_survives():
     return cursor_pos() == (6, 7)
 
 
-LF_IS_RAW = None       # decided once, on first use
+LF_IS_RAW = None  # decided once, on first use
 
 
 def _lf_note():
-    return ("this console rewrites LF to CRLF before the terminal sees it, so "
-            "the result would say nothing about YoTerm")
+    return (
+        "this console rewrites LF to CRLF before the terminal sees it, so "
+        "the result would say nothing about YoTerm"
+    )
 
 
 def auto_vt100_controls(cols, rows):
@@ -698,8 +705,11 @@ def auto_vt100_controls(cols, rows):
     # CAN/SUB abandon an escape sequence mid-flight: the rest of it must not be
     # treated as a command, and its bytes must not land on the screen.
     out(CSI + "10;5H" + CSI + "3" + "\x18" + "H")
-    check("CAN 0x18 cancels a sequence in flight (the 'H' is just text)",
-          cursor_pos(), (10, 6))
+    check(
+        "CAN 0x18 cancels a sequence in flight (the 'H' is just text)",
+        cursor_pos(),
+        (10, 6),
+    )
     out(CSI + "11;5H" + CSI + "3" + "\x1a" + "H")
     check("SUB 0x1A cancels a sequence in flight", cursor_pos(), (11, 6))
 
@@ -711,7 +721,7 @@ def auto_vt100_controls(cols, rows):
 def auto_vt100_modes(cols, rows):
     section("VT100 modes (LNM, IRM, DECCKM, DECSCNM, DECCOLM)")
 
-    out(CSI + "20h")                       # LNM on
+    out(CSI + "20h")  # LNM on
     if LF_IS_RAW:
         out(CSI + "5;7H\n")
         check("LNM ESC[20h makes LF return to column 1", cursor_pos(), (6, 1))
@@ -730,24 +740,32 @@ def auto_vt100_modes(cols, rows):
 
     # IRM: typing pushes the rest of the line right instead of overwriting it.
     out(CSI + "2J" + CSI + "3;1H" + "ABCDEF")
-    out(CSI + "4h")                        # IRM on
+    out(CSI + "4h")  # IRM on
     out(CSI + "3;1H" + "xy")
-    check("IRM ESC[4h inserts, so the cursor still advances normally",
-          cursor_pos(), (3, 3))
+    check(
+        "IRM ESC[4h inserts, so the cursor still advances normally",
+        cursor_pos(),
+        (3, 3),
+    )
     check("DECRQM reports IRM set", _mode_report(CSI + "4$p"), "\x1b[4;1$y")
     out(CSI + "4l")
     check("DECRQM reports IRM reset", _mode_report(CSI + "4$p"), "\x1b[4;2$y")
 
     out(CSI + "?1h")
-    check("DECRQM reports DECCKM set (arrows send ESC O A)",
-          _mode_report(CSI + "?1$p"), "\x1b[?1;1$y")
+    check(
+        "DECRQM reports DECCKM set (arrows send ESC O A)",
+        _mode_report(CSI + "?1$p"),
+        "\x1b[?1;1$y",
+    )
     out(CSI + "?1l")
-    check("DECRQM reports DECCKM reset",
-          _mode_report(CSI + "?1$p"), "\x1b[?1;2$y")
+    check("DECRQM reports DECCKM reset", _mode_report(CSI + "?1$p"), "\x1b[?1;2$y")
 
     out(CSI + "?5h")
-    check("DECRQM reports DECSCNM set (reverse video)",
-          _mode_report(CSI + "?5$p"), "\x1b[?5;1$y")
+    check(
+        "DECRQM reports DECSCNM set (reverse video)",
+        _mode_report(CSI + "?5$p"),
+        "\x1b[?5;1$y",
+    )
     out(CSI + "?5l")
 
     # DECCOLM's side effects are what programs depend on: region cleared,
@@ -760,12 +778,18 @@ def auto_vt100_modes(cols, rows):
 
     # Modes a CRT needed and a GPU doesn't. Accepted so a program that sets
     # them isn't told "unknown", but they do nothing.
-    for mode, name in (("?4", "DECSCLM smooth scroll"), ("?8", "DECARM autorepeat"),
-                       ("?9", "DECINLM interlace")):
+    for mode, name in (
+        ("?4", "DECSCLM smooth scroll"),
+        ("?8", "DECARM autorepeat"),
+        ("?9", "DECINLM interlace"),
+    ):
         out(CSI + mode + "h")
         # The reply keeps the '?' — it's a private mode.
-        check("%s is accepted (DECRQM: set)" % name,
-              _mode_report(CSI + mode + "$p"), "\x1b[%s;1$y" % mode)
+        check(
+            "%s is accepted (DECRQM: set)" % name,
+            _mode_report(CSI + mode + "$p"),
+            "\x1b[%s;1$y" % mode,
+        )
         out(CSI + mode + "l")
 
 
@@ -773,25 +797,30 @@ def auto_vt100_reports():
     section("VT100 reports (DECID, DECREQTPARM)")
 
     with raw_input_mode():
-        out(ESC + "Z")                     # DECID
+        out(ESC + "Z")  # DECID
         reply = _read_reply()
     m = re.search(r"\x1b\[\?[\d;]+c", reply)
-    check("DECID ESC Z identifies like DA1", m.group(0) if m else None,
-          "\x1b[?1;2c")
+    check("DECID ESC Z identifies like DA1", m.group(0) if m else None, "\x1b[?1;2c")
 
     with raw_input_mode():
-        out(CSI + "0x")                    # DECREQTPARM, request 0 -> report 2
+        out(CSI + "0x")  # DECREQTPARM, request 0 -> report 2
         reply = _read_reply()
     m = re.search(r"\x1b\[[\d;]+x", reply)
-    check("DECREQTPARM ESC[0x reports terminal parameters",
-          m.group(0) if m else None, "\x1b[2;1;1;120;120;1;0x")
+    check(
+        "DECREQTPARM ESC[0x reports terminal parameters",
+        m.group(0) if m else None,
+        "\x1b[2;1;1;120;120;1;0x",
+    )
 
     with raw_input_mode():
-        out(CSI + "1x")                    # request 1 -> report 3
+        out(CSI + "1x")  # request 1 -> report 3
         reply = _read_reply()
     m = re.search(r"\x1b\[[\d;]+x", reply)
-    check("DECREQTPARM ESC[1x reports with a solicited flag of 3",
-          m.group(0) if m else None, "\x1b[3;1;1;120;120;1;0x")
+    check(
+        "DECREQTPARM ESC[1x reports with a solicited flag of 3",
+        m.group(0) if m else None,
+        "\x1b[3;1;1;120;120;1;0x",
+    )
 
 
 def auto_vt100_reset(cols, rows):
@@ -817,11 +846,16 @@ def auto_vt100_reset(cols, rows):
 
     # Double-height/width lines: we render single-width, but the sequence must
     # still be swallowed whole — the digit must not land on the screen.
-    for seq, name in (("3", "DECDHL top"), ("4", "DECDHL bottom"),
-                      ("5", "DECSWL"), ("6", "DECDWL")):
+    for seq, name in (
+        ("3", "DECDHL top"),
+        ("4", "DECDHL bottom"),
+        ("5", "DECSWL"),
+        ("6", "DECDWL"),
+    ):
         out(CSI + "7;5H" + ESC + "#" + seq)
-        check("ESC # %s (%s) is consumed, not printed" % (seq, name),
-              cursor_pos(), (7, 5))
+        check(
+            "ESC # %s (%s) is consumed, not printed" % (seq, name), cursor_pos(), (7, 5)
+        )
 
     # Keypad mode is an input-side switch: it must not disturb the screen.
     out(CSI + "9;3H" + ESC + "=")
@@ -838,12 +872,18 @@ def auto_vt100_charsets():
     # The glyph itself can't be seen from here, but the cell advance can, and a
     # charset switch must never change how many columns text takes.
     out(CSI + "2J" + CSI + "3;1H" + ESC + "(0" + "qqqq" + ESC + "(B")
-    check("ESC ( 0 line-drawing glyphs still advance one column each",
-          cursor_pos(), (3, 5))
+    check(
+        "ESC ( 0 line-drawing glyphs still advance one column each",
+        cursor_pos(),
+        (3, 5),
+    )
 
     out(CSI + "4;1H" + ESC + ")0" + "\x0e" + "qqq" + "\x0f" + ESC + "(B")
-    check("SO/SI switch to G1 and back without disturbing the advance",
-          cursor_pos(), (4, 4))
+    check(
+        "SO/SI switch to G1 and back without disturbing the advance",
+        cursor_pos(),
+        (4, 4),
+    )
 
     out(CSI + "5;1H" + "ABC")
     check("back on ASCII after ESC ( B", cursor_pos(), (5, 4))
@@ -851,8 +891,7 @@ def auto_vt100_charsets():
     # UK national set: '#' is a pound sign. Same width, so the advance is all
     # DSR can see — the glyph itself is the visual suite's job.
     out(CSI + "6;1H" + ESC + "(A" + "##" + ESC + "(B")
-    check("ESC ( A (UK set) keeps a single column per glyph",
-          cursor_pos(), (6, 3))
+    check("ESC ( A (UK set) keeps a single column per glyph", cursor_pos(), (6, 3))
     out(CSI + "2J")
 
 
@@ -861,15 +900,15 @@ def auto_vt220_soft_reset(cols, rows):
 
     # Leave every mode DECSTR is meant to touch in its *non-default* state, so
     # a passing check can only mean the reset actually moved it.
-    out(CSI + "3;8r")                      # a scroll region
-    out(CSI + "?6h")                       # DECOM on
-    out(CSI + "4h")                        # IRM on
-    out(CSI + "?7l")                       # DECAWM off (reset leaves it off too)
-    out(CSI + "?1h")                       # DECCKM on
-    out(CSI + "?25l")                      # cursor hidden
-    out(CSI + "9;9H")                      # cursor away from home
+    out(CSI + "3;8r")  # a scroll region
+    out(CSI + "?6h")  # DECOM on
+    out(CSI + "4h")  # IRM on
+    out(CSI + "?7l")  # DECAWM off (reset leaves it off too)
+    out(CSI + "?1h")  # DECCKM on
+    out(CSI + "?25l")  # cursor hidden
+    out(CSI + "9;9H")  # cursor away from home
 
-    out(CSI + "!p")                        # DECSTR
+    out(CSI + "!p")  # DECSTR
     check("DECSTR homes the cursor", cursor_pos(), (1, 1))
 
     out(CSI + "999;1H")
@@ -878,21 +917,24 @@ def auto_vt220_soft_reset(cols, rows):
     check("DECSTR resets origin mode", _mode_report(CSI + "?6$p"), "\x1b[?6;2$y")
     check("DECSTR resets insert mode", _mode_report(CSI + "4$p"), "\x1b[4;2$y")
     check("DECSTR resets DECCKM", _mode_report(CSI + "?1$p"), "\x1b[?1;2$y")
-    check("DECSTR shows the cursor again",
-          _mode_report(CSI + "?25$p"), "\x1b[?25;1$y")
+    check("DECSTR shows the cursor again", _mode_report(CSI + "?25$p"), "\x1b[?25;1$y")
     # Per the VT220 manual a soft reset leaves auto-wrap OFF, unlike RIS.
-    check("DECSTR leaves auto-wrap off (VT220 manual)",
-          _mode_report(CSI + "?7$p"), "\x1b[?7;2$y")
+    check(
+        "DECSTR leaves auto-wrap off (VT220 manual)",
+        _mode_report(CSI + "?7$p"),
+        "\x1b[?7;2$y",
+    )
 
     # But it must NOT wipe the screen the way RIS does — that's the whole
     # reason a program reaches for a soft reset. Leave a marker, soft-reset,
     # and confirm the cell is still there by parking the cursor past it.
-    out(CSI + "?7h")                       # put auto-wrap back for the rest
+    out(CSI + "?7h")  # put auto-wrap back for the rest
     out(CSI + "2J" + CSI + "5;1H" + "keepme")
     out(CSI + "!p")
     out(CSI + "5;1H" + CSI + "6C")
-    check("DECSTR does not erase the screen (unlike RIS)",
-          cursor_pos(), (5, 7))            # 'keepme' is 6 wide, so col 7 is free
+    check(
+        "DECSTR does not erase the screen (unlike RIS)", cursor_pos(), (5, 7)
+    )  # 'keepme' is 6 wide, so col 7 is free
     out(CSI + "2J")
 
 
@@ -903,16 +945,16 @@ def auto_vt220_selective_erase(cols, rows):
     # leave the cursor where it was — the content behaviour (protected cells
     # survive) is asserted in the loopback harness and shown in the visual
     # suite. Getting the parse right is what stops the digits landing on screen.
-    out(CSI + "6;12H" + CSI + '1"q')        # DECSCA 1: protect
-    check("DECSCA ESC[1\"q is consumed, cursor stays", cursor_pos(), (6, 12))
+    out(CSI + "6;12H" + CSI + '1"q')  # DECSCA 1: protect
+    check('DECSCA ESC[1"q is consumed, cursor stays', cursor_pos(), (6, 12))
 
-    out(CSI + '0"q')                        # DECSCA 0: unprotect
-    check("DECSCA ESC[0\"q is consumed, cursor stays", cursor_pos(), (6, 12))
+    out(CSI + '0"q')  # DECSCA 0: unprotect
+    check('DECSCA ESC[0"q is consumed, cursor stays', cursor_pos(), (6, 12))
 
-    out(CSI + "?0J")                         # DECSED: like ED, cursor stays
+    out(CSI + "?0J")  # DECSED: like ED, cursor stays
     check("DECSED ESC[?0J leaves the cursor put", cursor_pos(), (6, 12))
 
-    out(CSI + "?0K")                         # DECSEL: like EL, cursor stays
+    out(CSI + "?0K")  # DECSEL: like EL, cursor stays
     check("DECSEL ESC[?0K leaves the cursor put", cursor_pos(), (6, 12))
     out(CSI + "2J")
 
@@ -927,23 +969,19 @@ def auto_vt220_charsets(cols):
     # Designate G2 as the line-drawing set, then single-shift one glyph out of
     # it: SS2 affects exactly one character, and GL reverts on its own.
     out(CSI + "3;1H" + ESC + "*0" + ESC + "N" + "q" + "ABC")
-    check("SS2 (ESC N) shifts one glyph from G2, then reverts",
-          cursor_pos(), (3, 5))
+    check("SS2 (ESC N) shifts one glyph from G2, then reverts", cursor_pos(), (3, 5))
 
     # Designate G3, single-shift with SS3.
     out(CSI + "4;1H" + ESC + "+0" + ESC + "O" + "x" + "AB")
-    check("SS3 (ESC O) shifts one glyph from G3, then reverts",
-          cursor_pos(), (4, 4))
+    check("SS3 (ESC O) shifts one glyph from G3, then reverts", cursor_pos(), (4, 4))
 
     # Lock G2 into GL with LS2, draw a run, then lock G0 back with SI.
     out(CSI + "5;1H" + ESC + "n" + "qqqq" + "\x0f" + "AB")
-    check("LS2 (ESC n) locks G2 into GL until SI restores G0",
-          cursor_pos(), (5, 7))
+    check("LS2 (ESC n) locks G2 into GL until SI restores G0", cursor_pos(), (5, 7))
 
     # LS3 likewise.
     out(CSI + "6;1H" + ESC + "o" + "xxx" + "\x0f" + "A")
-    check("LS3 (ESC o) locks G3 into GL until SI restores G0",
-          cursor_pos(), (6, 5))
+    check("LS3 (ESC o) locks G3 into GL until SI restores G0", cursor_pos(), (6, 5))
 
     # Hand the terminal back exactly as pristine as we found it: G2/G3 were
     # designated to the graphics set above, and leaving them there is leftover
@@ -957,31 +995,36 @@ def auto_vt220_modes():
     section("VT220 modes (DECNKM ?66, DECBKM ?67)")
 
     out(CSI + "?66h")
-    check("DECRQM reports DECNKM set (application keypad)",
-          _mode_report(CSI + "?66$p"), "\x1b[?66;1$y")
+    check(
+        "DECRQM reports DECNKM set (application keypad)",
+        _mode_report(CSI + "?66$p"),
+        "\x1b[?66;1$y",
+    )
     out(CSI + "?66l")
-    check("DECRQM reports DECNKM reset",
-          _mode_report(CSI + "?66$p"), "\x1b[?66;2$y")
+    check("DECRQM reports DECNKM reset", _mode_report(CSI + "?66$p"), "\x1b[?66;2$y")
 
     out(CSI + "?67h")
-    check("DECRQM reports DECBKM set (backspace sends BS)",
-          _mode_report(CSI + "?67$p"), "\x1b[?67;1$y")
+    check(
+        "DECRQM reports DECBKM set (backspace sends BS)",
+        _mode_report(CSI + "?67$p"),
+        "\x1b[?67;1$y",
+    )
     out(CSI + "?67l")
-    check("DECRQM reports DECBKM reset",
-          _mode_report(CSI + "?67$p"), "\x1b[?67;2$y")
+    check("DECRQM reports DECBKM reset", _mode_report(CSI + "?67$p"), "\x1b[?67;2$y")
 
 
 def auto_vt220_conformance():
-    section("VT220 conformance level (DECSCL ESC[Ps\"p)")
+    section('VT220 conformance level (DECSCL ESC[Ps"p)')
 
     # We always answer DA as a VT100, so DECSCL only has to be swallowed whole:
     # the digits and the '\"' intermediate must not reach the screen.
     out(CSI + "7;5H" + CSI + '62"p')
-    check("DECSCL ESC[62\"p is consumed, not printed", cursor_pos(), (7, 5))
+    check('DECSCL ESC[62"p is consumed, not printed', cursor_pos(), (7, 5))
 
     out(CSI + "8;5H" + CSI + '61;1"p')
-    check("DECSCL ESC[61;1\"p (with a second param) is consumed too",
-          cursor_pos(), (8, 5))
+    check(
+        'DECSCL ESC[61;1"p (with a second param) is consumed too', cursor_pos(), (8, 5)
+    )
     out(CSI + "2J")
 
 
@@ -990,35 +1033,57 @@ def auto_request_mode():
 
     # Pm: 1 = set, 2 = reset, 0 = we don't know the mode.
     out(CSI + "?7h")
-    check("DECRQM reports auto-wrap set after ESC[?7h",
-          _mode_report(CSI + "?7$p"), "\x1b[?7;1$y")
+    check(
+        "DECRQM reports auto-wrap set after ESC[?7h",
+        _mode_report(CSI + "?7$p"),
+        "\x1b[?7;1$y",
+    )
 
     out(CSI + "?7l")
-    check("DECRQM reports auto-wrap reset after ESC[?7l",
-          _mode_report(CSI + "?7$p"), "\x1b[?7;2$y")
+    check(
+        "DECRQM reports auto-wrap reset after ESC[?7l",
+        _mode_report(CSI + "?7$p"),
+        "\x1b[?7;2$y",
+    )
     out(CSI + "?7h")
 
     out(CSI + "?25l")
-    check("DECRQM tracks cursor visibility (DECTCEM)",
-          _mode_report(CSI + "?25$p"), "\x1b[?25;2$y")
+    check(
+        "DECRQM tracks cursor visibility (DECTCEM)",
+        _mode_report(CSI + "?25$p"),
+        "\x1b[?25;2$y",
+    )
     out(CSI + "?25h")
-    check("DECRQM tracks cursor visibility back on",
-          _mode_report(CSI + "?25$p"), "\x1b[?25;1$y")
+    check(
+        "DECRQM tracks cursor visibility back on",
+        _mode_report(CSI + "?25$p"),
+        "\x1b[?25;1$y",
+    )
 
     out(CSI + "?2004h")
-    check("DECRQM tracks bracketed paste",
-          _mode_report(CSI + "?2004$p"), "\x1b[?2004;1$y")
+    check(
+        "DECRQM tracks bracketed paste", _mode_report(CSI + "?2004$p"), "\x1b[?2004;1$y"
+    )
     out(CSI + "?2004l")
 
     out(CSI + "?1000h")
-    check("DECRQM tracks the active mouse mode",
-          _mode_report(CSI + "?1000$p"), "\x1b[?1000;1$y")
-    check("DECRQM: a mouse mode that isn't the active one reads as reset",
-          _mode_report(CSI + "?1003$p"), "\x1b[?1003;2$y")
+    check(
+        "DECRQM tracks the active mouse mode",
+        _mode_report(CSI + "?1000$p"),
+        "\x1b[?1000;1$y",
+    )
+    check(
+        "DECRQM: a mouse mode that isn't the active one reads as reset",
+        _mode_report(CSI + "?1003$p"),
+        "\x1b[?1003;2$y",
+    )
     out(CSI + "?1000l")
 
-    check("DECRQM reports 0 (unknown) for a mode we don't implement",
-          _mode_report(CSI + "?9999$p"), "\x1b[?9999;0$y")
+    check(
+        "DECRQM reports 0 (unknown) for a mode we don't implement",
+        _mode_report(CSI + "?9999$p"),
+        "\x1b[?9999;0$y",
+    )
 
 
 def auto_alignment(cols, rows):
@@ -1034,22 +1099,25 @@ def auto_alignment(cols, rows):
     # It fills the screen, so the cursor should sit past 'E's, not blanks:
     # writing at the end of a filled line still wraps normally.
     out(ESC + "#8" + CSI + "1;%dH" % cols + "X")
-    check("DECALN leaves a normal screen behind (last column still parks)",
-          cursor_pos(), (1, cols))
+    check(
+        "DECALN leaves a normal screen behind (last column still parks)",
+        cursor_pos(),
+        (1, cols),
+    )
     out(CSI + "2J")
 
 
 def auto_margins_clamp(rows):
     section("Cursor vs. scroll margins")
 
-    out(CSI + "5;10r")            # region = rows 5..10
+    out(CSI + "5;10r")  # region = rows 5..10
     out(CSI + "8;3H" + CSI + "99A")
-    check("CUU from inside the region stops at the top margin",
-          cursor_pos(), (5, 3))
+    check("CUU from inside the region stops at the top margin", cursor_pos(), (5, 3))
 
     out(CSI + "8;3H" + CSI + "99B")
-    check("CUD from inside the region stops at the bottom margin",
-          cursor_pos(), (10, 3))
+    check(
+        "CUD from inside the region stops at the bottom margin", cursor_pos(), (10, 3)
+    )
 
     out(CSI + "8;3H" + CSI + "99E")
     check("CNL stops at the bottom margin too", cursor_pos(), (10, 1))
@@ -1059,12 +1127,16 @@ def auto_margins_clamp(rows):
 
     # Outside the region the margins don't apply — it's just the screen edge.
     out(CSI + "2;3H" + CSI + "99A")
-    check("CUU from above the region clamps to the screen top, not the margin",
-          cursor_pos(), (1, 3))
+    check(
+        "CUU from above the region clamps to the screen top, not the margin",
+        cursor_pos(),
+        (1, 3),
+    )
 
     out(CSI + "%d;3H" % rows + CSI + "99B")
-    check("CUD from below the region clamps to the screen bottom",
-          cursor_pos(), (rows, 3))
+    check(
+        "CUD from below the region clamps to the screen bottom", cursor_pos(), (rows, 3)
+    )
     out(CSI + "r")
 
 
@@ -1074,15 +1146,18 @@ def auto_alt_screen(rows):
     cursor back afterwards, or the report would print in the wrong place."""
     section("Alternate screen buffer (?1049)")
 
-    out(CSI + "?1049l")        # back to the primary
-    out(ESC + "7")             # remember where the shell left its cursor
+    out(CSI + "?1049l")  # back to the primary
+    out(ESC + "7")  # remember where the shell left its cursor
 
     out(CSI + "9;20H")
     out(CSI + "?1049h")
     check("entering the alt screen homes the cursor", cursor_pos(), (1, 1))
     out(CSI + "?1049l")
-    check("leaving the alt screen restores the cursor you came in with",
-          cursor_pos(), (9, 20))
+    check(
+        "leaving the alt screen restores the cursor you came in with",
+        cursor_pos(),
+        (9, 20),
+    )
 
     # A region set on the primary screen must not leak into the alt screen.
     out(CSI + "3;8r")
@@ -1091,24 +1166,34 @@ def auto_alt_screen(rows):
     out(CSI + "?1049l")
     out(CSI + "r")
 
-    check("DECRQM knows we're on the primary screen",
-          _mode_report(CSI + "?1049$p"), "\x1b[?1049;2$y")
+    check(
+        "DECRQM knows we're on the primary screen",
+        _mode_report(CSI + "?1049$p"),
+        "\x1b[?1049;2$y",
+    )
     out(CSI + "?1049h")
-    check("DECRQM knows we're on the alt screen",
-          _mode_report(CSI + "?1049$p"), "\x1b[?1049;1$y")
+    check(
+        "DECRQM knows we're on the alt screen",
+        _mode_report(CSI + "?1049$p"),
+        "\x1b[?1049;1$y",
+    )
     out(CSI + "?1049l")
 
-    out(ESC + "8")             # shell's cursor back where we found it
-    out(CSI + "?1049h")        # and back onto the alt screen for the rest
+    out(ESC + "8")  # shell's cursor back where we found it
+    out(CSI + "?1049h")  # and back onto the alt screen for the rest
 
 
 def auto_edit_cursor():
     section("Editing sequences leave the cursor alone (ICH/DCH/ECH/IL/DL)")
 
     # These edit the screen around the cursor; none of them should move it.
-    for seq, name in (("3@", "ICH ESC[3@"), ("3P", "DCH ESC[3P"),
-                      ("3X", "ECH ESC[3X"), ("2S", "SU  ESC[2S"),
-                      ("2T", "SD  ESC[2T")):
+    for seq, name in (
+        ("3@", "ICH ESC[3@"),
+        ("3P", "DCH ESC[3P"),
+        ("3X", "ECH ESC[3X"),
+        ("2S", "SU  ESC[2S"),
+        ("2T", "SD  ESC[2T"),
+    ):
         out(CSI + "6;12H" + CSI + seq)
         check("%s doesn't move the cursor" % name, cursor_pos(), (6, 12))
 
@@ -1133,20 +1218,23 @@ def auto_scroll_region_params(rows):
     section("DECSTBM parameters")
 
     out(CSI + "5r" + CSI + "99;1H")
-    check("DECSTBM ESC[5r (top only) runs to the last row",
-          cursor_pos(), (rows, 1))
+    check("DECSTBM ESC[5r (top only) runs to the last row", cursor_pos(), (rows, 1))
 
     # An inverted or degenerate region is invalid, and resets to the full screen.
     out(CSI + "10;4r" + CSI + "999;1H")
-    check("DECSTBM with bottom above top resets to the full screen",
-          cursor_pos(), (rows, 1))
+    check(
+        "DECSTBM with bottom above top resets to the full screen",
+        cursor_pos(),
+        (rows, 1),
+    )
 
     out(CSI + "5;5r" + CSI + "999;1H")
-    check("DECSTBM with a one-row region is rejected (needs 2+ rows)",
-          cursor_pos(), (rows, 1))
+    check(
+        "DECSTBM with a one-row region is rejected (needs 2+ rows)",
+        cursor_pos(),
+        (rows, 1),
+    )
     out(CSI + "r")
-
-
 
 
 def run_auto():
@@ -1654,7 +1742,7 @@ def visual_wrapping():
 
 
 def visual_selective_erase():
-    title("Selective erase (DECSCA ESC[Ps\"q + DECSED/DECSEL)")
+    title('Selective erase (DECSCA ESC[Ps"q + DECSED/DECSEL)')
     note("the protected FIELDS survive; only the unprotected text is wiped")
 
     # A tiny form: fixed labels are protected, the "answers" are not. DECSEL
@@ -1670,13 +1758,15 @@ def visual_selective_erase():
     # cursor is sitting on the City row, so it's up ONE to reach Name; use
     # CUD (ESC[B) + CR to step back down, which doesn't depend on how the
     # platform treats a bare LF.
-    out(CSI + "1A\r")           # to the Name row, column 1
-    out(CSI + "?2K")            # DECSEL 2: wipe unprotected across the line
-    out(CSI + "1B\r")           # down to the City row, column 1
+    out(CSI + "1A\r")  # to the Name row, column 1
+    out(CSI + "?2K")  # DECSEL 2: wipe unprotected across the line
+    out(CSI + "1B\r")  # down to the City row, column 1
     out(CSI + "?2K")
-    out(CSI + "1B\r")           # down past the form for the caption
-    print(f"{CSI}2m  ^ ESC[?2K erased the answers; 'Name:'/'City:' were "
-          f"protected{CSI}0m")
+    out(CSI + "1B\r")  # down past the form for the caption
+    print(
+        f"{CSI}2m  ^ ESC[?2K erased the answers; 'Name:'/'City:' were "
+        f"protected{CSI}0m"
+    )
     pause(1.5)
 
 

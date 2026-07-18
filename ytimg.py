@@ -13,7 +13,7 @@ import math
 
 try:
     from PIL import Image
-except ImportError:            # the terminal still runs; images just no-op
+except ImportError:  # the terminal still runs; images just no-op
     Image = None
 
 # Cap the texture we ever upload, so one stray 8000px screenshot can't hand the
@@ -118,11 +118,22 @@ class ImagePlacement:
     app caches the GPU texture by this object's identity.
     """
 
-    __slots__ = ("id", "top_line", "left", "cols", "rows",
-                 "rgba", "iw", "ih", "alt", "fit")
+    __slots__ = (
+        "id",
+        "top_line",
+        "left",
+        "cols",
+        "rows",
+        "rgba",
+        "iw",
+        "ih",
+        "alt",
+        "fit",
+    )
 
-    def __init__(self, img_id, top_line, left, cols, rows, rgba, iw, ih, alt,
-                 fit="contain"):
+    def __init__(
+        self, img_id, top_line, left, cols, rows, rgba, iw, ih, alt, fit="contain"
+    ):
         self.id = img_id
         self.top_line = top_line
         self.left = left
@@ -131,5 +142,5 @@ class ImagePlacement:
         self.rgba = rgba
         self.iw = iw
         self.ih = ih
-        self.alt = alt   # placed on the alternate screen?
-        self.fit = fit   # 'contain' (letterbox) or 'fill' (stretch to the box)
+        self.alt = alt  # placed on the alternate screen?
+        self.fit = fit  # 'contain' (letterbox) or 'fill' (stretch to the box)

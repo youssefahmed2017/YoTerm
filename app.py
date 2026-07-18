@@ -215,6 +215,7 @@ def combo_arrow_qss():
     global _ARROW_PATH
     if _ARROW_PATH is None:
         import tempfile
+
         pm = QtGui.QPixmap(16, 16)
         pm.fill(Qt.transparent)
         p = QtGui.QPainter(pm)
@@ -224,17 +225,23 @@ def combo_arrow_qss():
         pen.setCapStyle(Qt.RoundCap)
         pen.setJoinStyle(Qt.RoundJoin)
         p.setPen(pen)
-        p.drawPolyline(QtGui.QPolygonF([
-            QtCore.QPointF(4.5, 6.5),
-            QtCore.QPointF(8.0, 10.0),
-            QtCore.QPointF(11.5, 6.5),
-        ]))
+        p.drawPolyline(
+            QtGui.QPolygonF(
+                [
+                    QtCore.QPointF(4.5, 6.5),
+                    QtCore.QPointF(8.0, 10.0),
+                    QtCore.QPointF(11.5, 6.5),
+                ]
+            )
+        )
         p.end()
         path = os.path.join(tempfile.gettempdir(), "yoterm_combo_arrow.png")
         pm.save(path, "PNG")
-        _ARROW_PATH = path.replace("\\", "/")   # QSS urls want forward slashes
-    return ("QComboBox::down-arrow { image: url(%s); width: 16px; height: 16px; }"
-            % _ARROW_PATH)
+        _ARROW_PATH = path.replace("\\", "/")  # QSS urls want forward slashes
+    return (
+        "QComboBox::down-arrow { image: url(%s); width: 16px; height: 16px; }"
+        % _ARROW_PATH
+    )
 
 
 def enable_dark_titlebar(widget):
@@ -455,43 +462,61 @@ void main() {
 # vertex attributes: that scales to any number of stops without bumping into
 # the ~16 vertex-attribute limit, and it's the same "texture, not per-pixel
 # CPU work" spirit as the rest of the renderer. See docs/zones.md.
-ZONE_RAMP_W = 128   # texels per gradient ramp (resolution along the ramp)
-ZONE_RAMP_H = 64    # rows: max zones with a *distinct* gradient drawn per frame
+ZONE_RAMP_W = 128  # texels per gradient ramp (resolution along the ramp)
+ZONE_RAMP_H = 64  # rows: max zones with a *distinct* gradient drawn per frame
+
+ZONE_SHADOW_COLOR = (0.0, 0.0, 0.0, 0.5)  # translucent black; no colour field yet
 
 ZONE_VERTEX_SHADER = """
 #version 330
 in vec2 in_corner;        // per-vertex: the shared unit quad, (0,0)..(1,1)
-in vec2 in_pos;           // per-instance: bottom-left in NDC
-in vec2 in_size;          // per-instance: width/height in NDC
-in vec4 in_color;         // fill colour (rgb; a already carries opacity)
+in vec2 in_pos;           // per-instance: content box bottom-left, NDC
+in vec2 in_size;          // per-instance: content box width/height, NDC
+in vec4 in_color;         // fill colour (rgb; a is the fill's own alpha, 1=opaque)
 in float in_radius;       // corner radius, logical px
 in vec4 in_border_color;
 in float in_border_width; // logical px; 0 = no border
 in float in_angle;        // gradient angle, degrees (0 = left->right)
 in float in_ramp_row;     // row in the ramp texture, or < 0 for a solid fill
+in float in_shadow;       // soft-shadow spread, logical px; 0 = none
+in float in_opacity;      // final multiplier over the whole composited zone
 
 uniform vec2 u_win;       // widget size, logical px -- converts NDC to px
 
-out vec2 v_local;         // fragment position relative to the zone centre, px
-out vec2 v_half;          // zone half-size, px
+// The rendered quad is padded by `in_shadow` px on every side so the shadow's
+// falloff has room to fade to nothing without being clipped by the quad
+// itself -- a shadow is drawn in the SAME pass, not a second blurred texture.
+out vec2 v_local;         // fragment position relative to the CONTENT centre, px
+out vec2 v_half;          // CONTENT half-size (unpadded), px
 flat out vec4 v_color;
 flat out float v_radius;
 flat out vec4 v_border_color;
 flat out float v_border_width;
 flat out float v_angle;
 flat out float v_ramp_row;
+flat out float v_shadow;
+flat out float v_opacity;
 
 void main() {
-    gl_Position = vec4(in_pos + in_corner * in_size, 0, 1);
-    // NDC spans [-1, 1] == u_win pixels, so 1 NDC unit == u_win/2 px.
-    v_half = in_size * u_win * 0.25;
-    v_local = (in_corner - vec2(0.5)) * in_size * u_win * 0.5;
+    vec2 content_half_px = in_size * u_win * 0.25;
+    vec2 content_center = in_pos + in_size * 0.5;
+    // 1 NDC unit == u_win/2 px, so a px pad converts back with 2/u_win.
+    vec2 pad_ndc = vec2(in_shadow) * 2.0 / u_win;
+    vec2 padded_pos = in_pos - pad_ndc;
+    vec2 padded_size = in_size + pad_ndc * 2.0;
+    vec2 vertex_ndc = padded_pos + in_corner * padded_size;
+
+    gl_Position = vec4(vertex_ndc, 0, 1);
+    v_local = (vertex_ndc - content_center) * u_win * 0.5;
+    v_half = content_half_px;
     v_color = in_color;
     v_radius = in_radius;
     v_border_color = in_border_color;
     v_border_width = in_border_width;
     v_angle = in_angle;
     v_ramp_row = in_ramp_row;
+    v_shadow = in_shadow;
+    v_opacity = in_opacity;
 }
 """
 
@@ -507,7 +532,11 @@ flat in vec4 v_border_color;
 flat in float v_border_width;
 flat in float v_angle;
 flat in float v_ramp_row;
+flat in float v_shadow;
+flat in float v_opacity;
 out vec4 color;
+
+const vec4 SHADOW_COLOR = vec4(%(sr)s, %(sg)s, %(sb)s, %(sa)s);
 
 // Inigo Quilez's rounded-box SDF: negative inside, positive outside, in the
 // same units as p/b (here, logical px relative to the box centre).
@@ -521,7 +550,6 @@ void main() {
     float d = sdRoundBox(v_local, v_half, r);
     // ~1px antialiased edge; independent of zoom since everything is in px.
     float shape_alpha = 1.0 - smoothstep(-1.0, 1.0, d);
-    if (shape_alpha <= 0.0) discard;
 
     vec4 fill = v_color;
     if (v_ramp_row >= 0.0) {
@@ -539,15 +567,35 @@ void main() {
     float fill_mask = v_border_width > 0.0
         ? 1.0 - smoothstep(-1.0, 1.0, d + v_border_width)
         : 1.0;
-    vec3 rgb = mix(v_border_color.rgb, fill.rgb, fill_mask);
-    float a = mix(v_border_color.a, fill.a, fill_mask) * shape_alpha;
-    color = vec4(rgb, a);
-}
-""" % {"ramp_h": ZONE_RAMP_H}
+    vec3 content_rgb = mix(v_border_color.rgb, fill.rgb, fill_mask);
+    float content_a = mix(v_border_color.a, fill.a, fill_mask) * shape_alpha;
 
-# 16 floats per zone instance: pos.xy, size.xy, color.rgba, radius, border.rgba,
-# border_width, angle, ramp_row.
-_ZONE_FLOATS = 16
+    vec4 result = vec4(content_rgb, content_a);
+    if (v_shadow > 0.0) {
+        // Soft-edge falloff from the content's own edge outward, over
+        // `v_shadow` px -- a blur approximation computed for this fragment
+        // directly, not a second draw with a real gaussian.
+        float shadow_mask = 1.0 - smoothstep(0.0, v_shadow, max(d, 0.0));
+        vec4 shadow = vec4(SHADOW_COLOR.rgb, SHADOW_COLOR.a * shadow_mask);
+        // Composite the content OVER the shadow (standard "over" blending),
+        // so the shadow only shows where the content doesn't cover it.
+        float out_a = content_a + shadow.a * (1.0 - content_a);
+        vec3 out_rgb = (content_rgb * content_a
+                        + shadow.rgb * shadow.a * (1.0 - content_a))
+                       / max(out_a, 0.0001);
+        result = vec4(out_rgb, out_a);
+    }
+
+    result.a *= v_opacity;
+    if (result.a <= 0.0) discard;
+    color = result;
+}
+""" % {"ramp_h": ZONE_RAMP_H, "sr": ZONE_SHADOW_COLOR[0], "sg": ZONE_SHADOW_COLOR[1],
+       "sb": ZONE_SHADOW_COLOR[2], "sa": ZONE_SHADOW_COLOR[3]}
+
+# 18 floats per zone instance: pos.xy, size.xy, color.rgba, radius,
+# border.rgba, border_width, angle, ramp_row, shadow, opacity.
+_ZONE_FLOATS = 18
 
 
 class TerminalWidget(QOpenGLWidget):
@@ -580,18 +628,18 @@ class TerminalWidget(QOpenGLWidget):
         self._last_title = None  # last title pushed to the tab
         self._last_bell = 0
         self._last_reverse = False
-        self._has_blink = False   # is any SGR-5 text actually on screen?
+        self._has_blink = False  # is any SGR-5 text actually on screen?
         self._last_blink_on = True
         # YoTerm gradient text (ESC ] YT ; gradient). Geometry is collected when
         # the screen is rebuilt; the per-corner colours are recomputed every
         # frame so a `cycle:on` gradient can animate without a full rebuild.
-        self._grad_glyphs = []    # (grad_id, rx, ry, gw, rh, u0, v0, u1, v1)
-        self._grad_bbox = {}      # grad_id -> [minx, miny, maxx, maxy] in NDC
-        self._grad_specs = {}     # grad_id -> GradientRun
-        self._has_cycle = False   # is any animated gradient on screen?
+        self._grad_glyphs = []  # (grad_id, rx, ry, gw, rh, u0, v0, u1, v1)
+        self._grad_bbox = {}  # grad_id -> [minx, miny, maxx, maxy] in NDC
+        self._grad_specs = {}  # grad_id -> GradientRun
+        self._has_cycle = False  # is any animated gradient on screen?
         # YoTerm images (ESC ] YT ; img). One GPU texture per placement, cached
         # by the placement's identity and released when it's gone.
-        self._img_textures = {}   # id(placement) -> moderngl.Texture
+        self._img_textures = {}  # id(placement) -> moderngl.Texture
         self._atlas_cursor = 0  # our position in the shared atlas's log
         self.out_queue = queue.Queue()
 
@@ -684,20 +732,33 @@ class TerminalWidget(QOpenGLWidget):
             vertex_shader=ZONE_VERTEX_SHADER,
             fragment_shader=ZONE_FRAGMENT_SHADER,
         )
-        self.zone_program["ramp_tex"] = 2   # unit 0 = glyph atlas, 1 = images
+        self.zone_program["ramp_tex"] = 2  # unit 0 = glyph atlas, 1 = images
         self.zone_vbo = self.ctx.buffer(reserve=64_000)
         self.zone_vao = self.ctx.vertex_array(
             self.zone_program,
-            [(self.quad_vbo, "2f", "in_corner"),
-             (self.zone_vbo, "2f 2f 4f 1f 4f 1f 1f 1f/i",
-              "in_pos", "in_size", "in_color", "in_radius",
-              "in_border_color", "in_border_width", "in_angle", "in_ramp_row")],
+            [
+                (self.quad_vbo, "2f", "in_corner"),
+                (
+                    self.zone_vbo,
+                    "2f 2f 4f 1f 4f 1f 1f 1f 1f 1f/i",
+                    "in_pos",
+                    "in_size",
+                    "in_color",
+                    "in_radius",
+                    "in_border_color",
+                    "in_border_width",
+                    "in_angle",
+                    "in_ramp_row",
+                    "in_shadow",
+                    "in_opacity",
+                ),
+            ],
         )
         # Shared gradient-ramp atlas: one row per zone-with-a-gradient drawn
         # this frame, rebuilt only when at least one is on screen.
         self.zone_ramp = self.ctx.texture(
-            (ZONE_RAMP_W, ZONE_RAMP_H), 4,
-            b"\x00" * (ZONE_RAMP_W * ZONE_RAMP_H * 4))
+            (ZONE_RAMP_W, ZONE_RAMP_H), 4, b"\x00" * (ZONE_RAMP_W * ZONE_RAMP_H * 4)
+        )
         self.zone_ramp.filter = (moderngl.LINEAR, moderngl.LINEAR)
 
         # Terminal grid + shell. Grid is sized in *logical* pixels so text
@@ -706,12 +767,13 @@ class TerminalWidget(QOpenGLWidget):
         cols = max(1, self.win_w // self.cell_w)
         rows = max(1, self.win_h // self.cell_h)
         self.term = Terminal(cols, rows)
-        self.term.cursor.shape = CONFIG.shape()   # apps can still override it
+        self.term.cursor.shape = CONFIG.shape()  # apps can still override it
         self.term.cell_px = (self.cell_w, self.cell_h)  # image sizing needs it
 
         try:
-            self.pty = PtyProcess.spawn([CONFIG.shell], dimensions=(rows, cols),
-                                        env=shell_env())
+            self.pty = PtyProcess.spawn(
+                [CONFIG.shell], dimensions=(rows, cols), env=shell_env()
+            )
         except Exception as exc:
             # A configured shell that isn't installed shouldn't take the tab
             # down with a traceback — say so on the screen instead.
@@ -719,7 +781,9 @@ class TerminalWidget(QOpenGLWidget):
             self.term.write(
                 "\x1b[31mYoTerm: couldn't start %s\x1b[0m\r\n  %s\r\n\r\n"
                 "Pick another shell in Settings (Ctrl+,), then open a new tab.\r\n"
-                % (CONFIG.shell, exc), end="")
+                % (CONFIG.shell, exc),
+                end="",
+            )
 
         if self.pty is not None:
             threading.Thread(target=self._read_loop, daemon=True).start()
@@ -813,25 +877,24 @@ class TerminalWidget(QOpenGLWidget):
 
         total = self._static_quads + cursor.count
         if total:
-            stride = RectangleBuilder.FLOATS_PER_QUAD * 4   # bytes per quad
+            stride = RectangleBuilder.FLOATS_PER_QUAD * 4  # bytes per quad
             needed = total * stride
             if needed > self.vbo.size:
-                self.vbo.orphan(needed)   # grow; the old contents go with it
+                self.vbo.orphan(needed)  # grow; the old contents go with it
                 rewrite = True
             elif rewrite:
-                self.vbo.orphan()      # discard first; avoids stalling on the GPU
+                self.vbo.orphan()  # discard first; avoids stalling on the GPU
             if rewrite:
                 self.vbo.write(self._static_data)
             if cursor.count:
-                self.vbo.write(cursor.buffer(),
-                               offset=self._static_quads * stride)
+                self.vbo.write(cursor.buffer(), offset=self._static_quads * stride)
             self.vao.render(moderngl.TRIANGLES, vertices=6, instances=total)
 
         # Images sit over their (blank, reserved) cells; gradient text draws on
         # top of the instanced pass. Both are their own programs.
         self._render_images()
         self._render_gradients()
-        self._render_zones(above=True)   # overlays: modals, tooltips, menus
+        self._render_zones(above=True)  # overlays: modals, tooltips, menus
 
     # ------------------------------------------------------------ PTY I/O
 
@@ -908,8 +971,11 @@ class TerminalWidget(QOpenGLWidget):
         # gradient only needs new per-corner colours (recomputed in paintGL),
         # not a full geometry rebuild, so marking the screen dirty here would
         # throw away the cached geometry every single frame for nothing.
-        if (self._dirty or self._has_cycle
-                or self._cursor_state() != self._last_cursor_state):
+        if (
+            self._dirty
+            or self._has_cycle
+            or self._cursor_state() != self._last_cursor_state
+        ):
             self.update()
 
     def _write_pty(self, data):
@@ -987,7 +1053,7 @@ class TerminalWidget(QOpenGLWidget):
         hit = self._color_cache.get(key)
         if hit is None:
             hit = self._resolve_colors(cell)
-            if invert:   # DECSCNM (?5): the whole screen reads inverted
+            if invert:  # DECSCNM (?5): the whole screen reads inverted
                 fg, bg = hit
                 hit = ((BG_COLOR if bg is None else bg), fg)
             if len(self._color_cache) > 4096:
@@ -1074,16 +1140,21 @@ class TerminalWidget(QOpenGLWidget):
                         if bb is None:
                             grad_bbox[gid] = [rx, ry, x1, y1]
                         else:
-                            if rx < bb[0]: bb[0] = rx
-                            if ry < bb[1]: bb[1] = ry
-                            if x1 > bb[2]: bb[2] = x1
-                            if y1 > bb[3]: bb[3] = y1
+                            if rx < bb[0]:
+                                bb[0] = rx
+                            if ry < bb[1]:
+                                bb[1] = ry
+                            if x1 > bb[2]:
+                                bb[2] = x1
+                            if y1 > bb[3]:
+                                bb[3] = y1
                         grad_glyphs.append((gid, rx, ry, gw, rh, u0, v0, u1, v1))
                         if cell.grad.cycle:
                             has_cycle = True
                     else:
-                        add_glyph(rx, ry, gw, rh, fg, u0, v0, u1, v1,
-                                  1.0 if is_color else 0.0)
+                        add_glyph(
+                            rx, ry, gw, rh, fg, u0, v0, u1, v1, 1.0 if is_color else 0.0
+                        )
 
                 # Underline / strikethrough are thin solid bars (they apply to
                 # spaces too, e.g. an underlined blank), and blink with the
@@ -1094,11 +1165,11 @@ class TerminalWidget(QOpenGLWidget):
                     if cell.strike:
                         add_glyph(rx, ry + st_off, rw, st_h, fg, su0, sv0, su1, sv1)
 
-        self._has_blink = has_blink   # drives repaints only while it's True
+        self._has_blink = has_blink  # drives repaints only while it's True
         self._grad_glyphs = grad_glyphs
         self._grad_bbox = grad_bbox
         self._grad_specs = grad_specs
-        self._has_cycle = has_cycle   # drives repaints while a gradient cycles
+        self._has_cycle = has_cycle  # drives repaints while a gradient cycles
 
     def _build_grad_vertices(self):
         """Per-vertex colours for the collected gradient glyphs at the current
@@ -1117,8 +1188,12 @@ class TerminalWidget(QOpenGLWidget):
             grad = self._grad_specs[gid]
             rad = math.radians(grad.angle)
             ax, ay = math.cos(rad), -math.sin(rad)  # 0deg -> right, 90deg -> down
-            projs = (minx * ax + miny * ay, maxx * ax + miny * ay,
-                     maxx * ax + maxy * ay, minx * ax + maxy * ay)
+            projs = (
+                minx * ax + miny * ay,
+                maxx * ax + miny * ay,
+                maxx * ax + maxy * ay,
+                minx * ax + maxy * ay,
+            )
             pmin, pmax = min(projs), max(projs)
             span = (pmax - pmin) or 1.0
             phase = elapsed * grad.speed if grad.cycle else 0.0
@@ -1132,7 +1207,7 @@ class TerminalWidget(QOpenGLWidget):
             def col(px, py):
                 t = (px * ax + py * ay - pmin) / span
                 if cycle:
-                    m = (t + phase) % 2.0      # ping-pong so the loop is seamless
+                    m = (t + phase) % 2.0  # ping-pong so the loop is seamless
                     t = 2.0 - m if m > 1.0 else m
                 if t < 0.0:
                     t = 0.0
@@ -1141,19 +1216,57 @@ class TerminalWidget(QOpenGLWidget):
                 return color_at(t)
 
             x1, y1 = rx + gw, ry + rh
-            r0, g0, b0 = col(rx, ry)    # bottom-left
-            r1, g1, b1 = col(x1, ry)    # bottom-right
-            r2, g2, b2 = col(x1, y1)    # top-right
-            r3, g3, b3 = col(rx, y1)    # top-left
+            r0, g0, b0 = col(rx, ry)  # bottom-left
+            r1, g1, b1 = col(x1, ry)  # bottom-right
+            r2, g2, b2 = col(x1, y1)  # top-right
+            r3, g3, b3 = col(rx, y1)  # top-left
             # Two triangles, winding matching the instanced unit quad.
-            data.extend((
-                rx, ry, u0, v0, r0, g0, b0,
-                x1, ry, u1, v0, r1, g1, b1,
-                x1, y1, u1, v1, r2, g2, b2,
-                rx, ry, u0, v0, r0, g0, b0,
-                x1, y1, u1, v1, r2, g2, b2,
-                rx, y1, u0, v1, r3, g3, b3,
-            ))
+            data.extend(
+                (
+                    rx,
+                    ry,
+                    u0,
+                    v0,
+                    r0,
+                    g0,
+                    b0,
+                    x1,
+                    ry,
+                    u1,
+                    v0,
+                    r1,
+                    g1,
+                    b1,
+                    x1,
+                    y1,
+                    u1,
+                    v1,
+                    r2,
+                    g2,
+                    b2,
+                    rx,
+                    ry,
+                    u0,
+                    v0,
+                    r0,
+                    g0,
+                    b0,
+                    x1,
+                    y1,
+                    u1,
+                    v1,
+                    r2,
+                    g2,
+                    b2,
+                    rx,
+                    y1,
+                    u0,
+                    v1,
+                    r3,
+                    g3,
+                    b3,
+                )
+            )
         return array("f", data), len(glyphs) * 6
 
     def _render_gradients(self):
@@ -1180,11 +1293,11 @@ class TerminalWidget(QOpenGLWidget):
         if box_px_w <= 0 or box_px_h <= 0:
             return l, r, t, b
         img_a, box_a = iw / ih, box_px_w / box_px_h
-        if img_a > box_a:          # image relatively wider: pillarbox top/bottom
+        if img_a > box_a:  # image relatively wider: pillarbox top/bottom
             frac = box_a / img_a
             mid, half = (t + b) / 2.0, (t - b) * frac / 2.0
             return l, r, mid + half, mid - half
-        frac = img_a / box_a       # image relatively taller: bars left/right
+        frac = img_a / box_a  # image relatively taller: bars left/right
         mid, half = (l + r) / 2.0, (r - l) * frac / 2.0
         return mid - half, mid + half, t, b
 
@@ -1222,12 +1335,16 @@ class TerminalWidget(QOpenGLWidget):
         if not term.zones:
             return
         alt = term.alt_screen
-        wanted = [z for z in term.zones.values()
-                  if z.alt == alt and (z.z >= 1) == above
-                  and (z.bg is not None or z.gradient is not None)]
+        wanted = [
+            z
+            for z in term.zones.values()
+            if z.alt == alt
+            and (z.z >= 1) == above
+            and (z.bg is not None or z.gradient is not None or z.shadow > 0)
+        ]
         if not wanted:
             return
-        wanted.sort(key=lambda z: z.z)   # lower z first within the layer
+        wanted.sort(key=lambda z: z.z)  # lower z first within the layer
 
         top_abs = term.first_line_no + len(term.scrollback) - term.scroll_offset
         sx = self.cell_w / self.win_w * 2.0
@@ -1237,7 +1354,7 @@ class TerminalWidget(QOpenGLWidget):
         for z in wanted:
             row_top = z.top_line - top_abs
             if row_top + z.h <= 0 or row_top >= term.height:
-                continue                      # scrolled out of view
+                continue  # scrolled out of view
             visible.append((z, row_top))
         if not visible:
             return
@@ -1257,15 +1374,28 @@ class TerminalWidget(QOpenGLWidget):
             else:
                 br, bg_, bb = 0.0, 0.0, 0.0
             ramp_row = row_of.get(id(z), -1)
-            data.extend((
-                left, bottom, right - left, top - bottom,      # pos, size
-                fr, fg, fb, z.opacity,                          # fill colour
-                z.radius,
-                br, bg_, bb, z.opacity if z.border is not None else 0.0,
-                z.border_w,
-                z.gradient.angle if z.gradient is not None else 0.0,
-                float(ramp_row),
-            ))
+            data.extend(
+                (
+                    left,
+                    bottom,
+                    right - left,
+                    top - bottom,  # pos, size
+                    fr,
+                    fg,
+                    fb,
+                    1.0 if z.bg is not None or z.gradient is not None else 0.0,
+                    z.radius,
+                    br,
+                    bg_,
+                    bb,
+                    1.0 if z.border is not None else 0.0,
+                    z.border_w,
+                    z.gradient.angle if z.gradient is not None else 0.0,
+                    float(ramp_row),
+                    z.shadow,
+                    z.opacity,  # applied once, to the whole composited zone
+                )
+            )
 
         count = len(data) // _ZONE_FLOATS
         buf = array("f", data)
@@ -1315,20 +1445,42 @@ class TerminalWidget(QOpenGLWidget):
             box_t = 1.0 - row_top * sy
             box_b = 1.0 - (row_top + im.rows) * sy
             if im.fit == "contain":
-                l, r, t, b = self._contain(box_l, box_r, box_t, box_b,
-                                           self.win_w, self.win_h, im.iw, im.ih)
+                l, r, t, b = self._contain(
+                    box_l, box_r, box_t, box_b, self.win_w, self.win_h, im.iw, im.ih
+                )
             else:  # 'fill' / 'cover' just use the whole cell box for now
                 l, r, t, b = box_l, box_r, box_t, box_b
 
             # Top image row is v=0, and the top edge sits at higher NDC y.
-            quad = array("f", (
-                l, b, 0.0, 1.0,
-                r, b, 1.0, 1.0,
-                r, t, 1.0, 0.0,
-                l, b, 0.0, 1.0,
-                r, t, 1.0, 0.0,
-                l, t, 0.0, 0.0,
-            ))
+            quad = array(
+                "f",
+                (
+                    l,
+                    b,
+                    0.0,
+                    1.0,
+                    r,
+                    b,
+                    1.0,
+                    1.0,
+                    r,
+                    t,
+                    1.0,
+                    0.0,
+                    l,
+                    b,
+                    0.0,
+                    1.0,
+                    r,
+                    t,
+                    1.0,
+                    0.0,
+                    l,
+                    t,
+                    0.0,
+                    0.0,
+                ),
+            )
             tex.use(1)
             self.img_vbo.orphan()
             self.img_vbo.write(quad)
@@ -1361,7 +1513,7 @@ class TerminalWidget(QOpenGLWidget):
         self.cell_w = max(1, round(self.atlas.glyph_w / SUPERSAMPLE))
         self.cell_h = max(1, round(self.atlas.glyph_h / SUPERSAMPLE))
         self._rebuild_texture()
-        self._resync_grid()      # fewer/more cells now fit; tell the shell
+        self._resync_grid()  # fewer/more cells now fit; tell the shell
         self._invalidate()
 
     def _rebuild_texture(self):
@@ -1373,8 +1525,8 @@ class TerminalWidget(QOpenGLWidget):
             if self.texture is not None:
                 self.texture.release()
             self.texture = self.ctx.texture(
-                (self.atlas.width, self.atlas.height), 4,
-                self.atlas.image.tobytes())
+                (self.atlas.width, self.atlas.height), 4, self.atlas.image.tobytes()
+            )
             self.texture.build_mipmaps()
             self.texture.anisotropy = self.ctx.max_anisotropy
             self._atlas_cursor = len(self.atlas.written)
@@ -1392,7 +1544,7 @@ class TerminalWidget(QOpenGLWidget):
         """What the caret looks like right now. Compared frame to frame so a
         blinking caret repaints, but a still one doesn't."""
         if not CONFIG.cursor:
-            return None            # nothing to repaint for
+            return None  # nothing to repaint for
         cur = self.term.cursor
         if not cur.visible or self.term.scroll_offset != 0:
             return None
@@ -1424,7 +1576,7 @@ class TerminalWidget(QOpenGLWidget):
             (idle - CURSOR_BLINK_DELAY) % CURSOR_BLINK_PERIOD
         ) / CURSOR_BLINK_PERIOD
         if not CONFIG.smooth_blink:
-            return 1.0 if phase < 0.5 else 0.0     # classic hard blink
+            return 1.0 if phase < 0.5 else 0.0  # classic hard blink
         level = 0.5 + 0.5 * math.cos(2.0 * math.pi * phase)  # 1 -> 0 -> 1
         for _ in range(2):  # smoothstep twice: ease the edges,
             level = level * level * (3.0 - 2.0 * level)  # flatten the holds
@@ -1432,7 +1584,7 @@ class TerminalWidget(QOpenGLWidget):
 
     def _add_cursor(self, builder):
         if not CONFIG.cursor:
-            return                 # the user turned the caret off entirely
+            return  # the user turned the caret off entirely
         cur = self.term.cursor
         if not cur.visible or self.term.scroll_offset != 0:
             return
@@ -1658,12 +1810,22 @@ class TerminalWidget(QOpenGLWidget):
     # instead of digits. Programs bind against them, so a stored flag that
     # nothing reads is worse than useless — it looks implemented.
     _KEYPAD_APP = {
-        Qt.Key_0: "\x1bOp", Qt.Key_1: "\x1bOq", Qt.Key_2: "\x1bOr",
-        Qt.Key_3: "\x1bOs", Qt.Key_4: "\x1bOt", Qt.Key_5: "\x1bOu",
-        Qt.Key_6: "\x1bOv", Qt.Key_7: "\x1bOw", Qt.Key_8: "\x1bOx",
-        Qt.Key_9: "\x1bOy", Qt.Key_Period: "\x1bOn", Qt.Key_Comma: "\x1bOl",
-        Qt.Key_Plus: "\x1bOk", Qt.Key_Minus: "\x1bOm",
-        Qt.Key_Asterisk: "\x1bOj", Qt.Key_Slash: "\x1bOo",
+        Qt.Key_0: "\x1bOp",
+        Qt.Key_1: "\x1bOq",
+        Qt.Key_2: "\x1bOr",
+        Qt.Key_3: "\x1bOs",
+        Qt.Key_4: "\x1bOt",
+        Qt.Key_5: "\x1bOu",
+        Qt.Key_6: "\x1bOv",
+        Qt.Key_7: "\x1bOw",
+        Qt.Key_8: "\x1bOx",
+        Qt.Key_9: "\x1bOy",
+        Qt.Key_Period: "\x1bOn",
+        Qt.Key_Comma: "\x1bOl",
+        Qt.Key_Plus: "\x1bOk",
+        Qt.Key_Minus: "\x1bOm",
+        Qt.Key_Asterisk: "\x1bOj",
+        Qt.Key_Slash: "\x1bOo",
         Qt.Key_Enter: "\x1bOM",
     }
 
@@ -1808,7 +1970,7 @@ class SettingsDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("YoTerm Settings")
         self.setMinimumWidth(440)
-        self._editors = {}        # name -> (get, set)
+        self._editors = {}  # name -> (get, set)
 
         form = QtWidgets.QFormLayout()
         form.setSpacing(10)
@@ -1825,18 +1987,21 @@ class SettingsDialog(QtWidgets.QDialog):
 
         note = QtWidgets.QLabel(
             "Saved to %s — that file is plain Python, so you can edit it by "
-            "hand too." % config_path())
+            "hand too." % config_path()
+        )
         note.setObjectName("hint")
         note.setWordWrap(True)
 
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok
             | QtWidgets.QDialogButtonBox.Cancel
-            | QtWidgets.QDialogButtonBox.RestoreDefaults)
+            | QtWidgets.QDialogButtonBox.RestoreDefaults
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        buttons.button(QtWidgets.QDialogButtonBox.RestoreDefaults
-                       ).clicked.connect(self._restore_defaults)
+        buttons.button(QtWidgets.QDialogButtonBox.RestoreDefaults).clicked.connect(
+            self._restore_defaults
+        )
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(12)
@@ -1848,7 +2013,7 @@ class SettingsDialog(QtWidgets.QDialog):
     def _editor(spec, value):
         """(widget, getter, setter) for one field."""
         meta = spec.metadata
-        if isinstance(spec.default, bool):        # before int: bool is an int
+        if isinstance(spec.default, bool):  # before int: bool is an int
             box = QtWidgets.QCheckBox()
             box.setChecked(bool(value))
             return box, box.isChecked, box.setChecked
@@ -1969,7 +2134,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ("Ctrl+Shift+W", self.close_current_tab),
             ("Ctrl+,", self.open_settings),
             ("Ctrl+=", lambda: self._zoom(1)),
-            ("Ctrl++", lambda: self._zoom(1)),     # the shifted key, on some layouts
+            ("Ctrl++", lambda: self._zoom(1)),  # the shifted key, on some layouts
             ("Ctrl+-", lambda: self._zoom(-1)),
             ("Ctrl+0", lambda: self._zoom(0)),
             ("Ctrl+Tab", lambda: self._cycle(1)),
@@ -2002,7 +2167,8 @@ class MainWindow(QtWidgets.QMainWindow):
             config_module.save(new)
         except OSError as exc:
             QtWidgets.QMessageBox.warning(
-                self, "YoTerm", "Couldn't save your settings:\n\n%s" % exc)
+                self, "YoTerm", "Couldn't save your settings:\n\n%s" % exc
+            )
             return
         CONFIG = new
         for i in range(self.stack.count()):
@@ -2013,10 +2179,11 @@ class MainWindow(QtWidgets.QMainWindow):
         path = config_path()
         if not os.path.exists(path):
             try:
-                path = config_module.save(CONFIG)   # something to actually edit
+                path = config_module.save(CONFIG)  # something to actually edit
             except OSError as exc:
                 QtWidgets.QMessageBox.warning(
-                    self, "YoTerm", "Couldn't create %s:\n\n%s" % (path, exc))
+                    self, "YoTerm", "Couldn't create %s:\n\n%s" % (path, exc)
+                )
                 return
         QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(path))
 
@@ -2213,9 +2380,11 @@ def main():
         # Started fine on defaults; say what was wrong rather than silently
         # ignoring a file the user thought was in effect.
         QtWidgets.QMessageBox.warning(
-            window, "YoTerm settings",
+            window,
+            "YoTerm settings",
             "Your settings file couldn't be used in full, so defaults were "
-            "applied where needed:\n\n%s\n\n%s" % (problem, config_path()))
+            "applied where needed:\n\n%s\n\n%s" % (problem, config_path()),
+        )
 
     sys.exit(app.exec())
 

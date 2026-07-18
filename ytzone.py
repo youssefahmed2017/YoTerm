@@ -110,5 +110,5 @@ def geometry_from(opts, zone=None):
     x = _int(opts.get("x"), zone.x if zone else 0)
     w = _int(opts.get("w"), zone.w if zone else 1)
     h = _int(opts.get("h"), zone.h if zone else 1)
-    y = _int(opts.get("y"))   # None means "leave the anchor where it is"
+    y = _int(opts.get("y"))  # None means "leave the anchor where it is"
     return max(0, x), y, max(1, w), max(1, h)

@@ -67,7 +67,7 @@ class YTConfig:
         metadata={
             "label": "Enable blink",
             "help": "Animate text marked blinking (SGR 5). Off, it just renders "
-                    "steadily — which is what most terminals do.",
+            "steadily — which is what most terminals do.",
         },
     )
 
@@ -111,8 +111,9 @@ def _validate(config):
                 setattr(config, spec.name, default)
         elif choices:
             if value not in choices:
-                problems.append("%s must be one of: %s"
-                                % (spec.name, ", ".join(choices)))
+                problems.append(
+                    "%s must be one of: %s" % (spec.name, ", ".join(choices))
+                )
                 setattr(config, spec.name, default)
         elif isinstance(default, int):
             # bool is an int subclass, so check it didn't sneak through.
@@ -146,8 +147,7 @@ def _import_config(path):
     suffix to infer one from.
     """
     loader = importlib.machinery.SourceFileLoader(MODULE_NAME, path)
-    spec = importlib.util.spec_from_file_location(MODULE_NAME, path,
-                                                  loader=loader)
+    spec = importlib.util.spec_from_file_location(MODULE_NAME, path, loader=loader)
     if spec is None or spec.loader is None:
         raise ImportError("not loadable as Python")
     module = importlib.util.module_from_spec(spec)
@@ -155,7 +155,7 @@ def _import_config(path):
     try:
         spec.loader.exec_module(module)
     except BaseException:
-        sys.modules.pop(spec.name, None)   # don't leave a half-built module
+        sys.modules.pop(spec.name, None)  # don't leave a half-built module
         raise
     return module
 

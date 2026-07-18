@@ -26,13 +26,38 @@ MAX_OSC = 1024
 # and sending plain ASCII, so 'q' is a horizontal line, 'x' a vertical one, and
 # so on. Without the mapping those programs print 'qqqqq' where a rule belongs.
 DEC_GRAPHICS = {
-    "_": " ", "`": "◆", "a": "▒", "b": "␉", "c": "␌",
-    "d": "␍", "e": "␊", "f": "°", "g": "±", "h": "␤",
-    "i": "␋", "j": "┘", "k": "┐", "l": "┌", "m": "└",
-    "n": "┼", "o": "⎺", "p": "⎻", "q": "─", "r": "⎼",
-    "s": "⎽", "t": "├", "u": "┤", "v": "┴", "w": "┬",
-    "x": "│", "y": "≤", "z": "≥", "{": "π", "|": "≠",
-    "}": "£", "~": "·",
+    "_": " ",
+    "`": "◆",
+    "a": "▒",
+    "b": "␉",
+    "c": "␌",
+    "d": "␍",
+    "e": "␊",
+    "f": "°",
+    "g": "±",
+    "h": "␤",
+    "i": "␋",
+    "j": "┘",
+    "k": "┐",
+    "l": "┌",
+    "m": "└",
+    "n": "┼",
+    "o": "⎺",
+    "p": "⎻",
+    "q": "─",
+    "r": "⎼",
+    "s": "⎽",
+    "t": "├",
+    "u": "┤",
+    "v": "┴",
+    "w": "┬",
+    "x": "│",
+    "y": "≤",
+    "z": "≥",
+    "{": "π",
+    "|": "≠",
+    "}": "£",
+    "~": "·",
 }
 
 # SGR color codes -> color names (matching tools.PALETTE keys).
@@ -241,7 +266,7 @@ class Terminal:
         self.current_reverse = False
         self.current_strike = False
         self.current_conceal = False
-        self.current_blink = False   # SGR 5
+        self.current_blink = False  # SGR 5
         # DECSCA (ESC [ Ps " q): whether new glyphs are erase-protected. Unlike
         # the SGR attributes above, this is NOT cleared by SGR 0 — only by
         # another DECSCA, a soft reset (DECSTR) or RIS.
@@ -255,8 +280,8 @@ class Terminal:
         # ANSI.SYS variant, only stashes the position. They get separate slots
         # so a prompt that brackets colored output in ESC[s/ESC[u doesn't have
         # its colors restored out from under it.
-        self.saved_cursor = None    # DECSC: position + SGR + origin mode
-        self.saved_pos = None       # SCOSC: position only
+        self.saved_cursor = None  # DECSC: position + SGR + origin mode
+        self.saved_pos = None  # SCOSC: position only
 
         # Horizontal tab stops (HTS / TBC), as 0-based columns. A fresh
         # terminal has one every TAB_SIZE columns.
@@ -302,17 +327,17 @@ class Terminal:
         self.primary_cursor = (0, 0)
 
         # VT100 modes.
-        self.insert_mode = False       # IRM (4): insert rather than overwrite
-        self.newline_mode = False      # LNM (20): LF also does a CR
-        self.cursor_keys_app = False   # DECCKM (?1): arrows send ESC O A
-        self.keypad_app = False        # DECKPAM / DECKPNM
-        self.reverse_video = False     # DECSCNM (?5): whole screen inverted
-        self.column_mode_132 = False   # DECCOLM (?3)
+        self.insert_mode = False  # IRM (4): insert rather than overwrite
+        self.newline_mode = False  # LNM (20): LF also does a CR
+        self.cursor_keys_app = False  # DECCKM (?1): arrows send ESC O A
+        self.keypad_app = False  # DECKPAM / DECKPNM
+        self.reverse_video = False  # DECSCNM (?5): whole screen inverted
+        self.column_mode_132 = False  # DECCOLM (?3)
         # Accepted so DECRQM can answer honestly, but inert: these describe CRT
         # hardware a GPU renderer has no equivalent for.
-        self.smooth_scroll = False     # DECSCLM (?4)
-        self.autorepeat = True         # DECARM (?8)
-        self.interlace = False         # DECINLM (?9)
+        self.smooth_scroll = False  # DECSCLM (?4)
+        self.autorepeat = True  # DECARM (?8)
+        self.interlace = False  # DECINLM (?9)
 
         # Character sets. The VT220 has four designatable slots, G0-G3, and
         # decides which one GL (the graphic-left, 0x20-0x7E range) draws from.
@@ -591,8 +616,11 @@ class Terminal:
     def cursor_down(self, n=1):
         """CUD. Mirror of cursor_up: stops at the bottom margin."""
         self.wrap_pending = False
-        limit = (self.scroll_bottom if self.cursor.y <= self.scroll_bottom
-                 else self.height - 1)
+        limit = (
+            self.scroll_bottom
+            if self.cursor.y <= self.scroll_bottom
+            else self.height - 1
+        )
         self.cursor.y = min(limit, self.cursor.y + n)
 
     def cursor_forward(self, n=1):
@@ -702,14 +730,15 @@ class Terminal:
         also drops any scroll region and homes the cursor.
         """
         self.scroll_top, self.scroll_bottom = 0, self.height - 1
-        self.screen = [[Cell(char="E") for _ in range(self.width)]
-                       for _ in range(self.height)]
+        self.screen = [
+            [Cell(char="E") for _ in range(self.width)] for _ in range(self.height)
+        ]
         self._set_cursor(0, 0)
 
     def report_mode(self, body, private):
         """DECRQM (ESC [ ? Ps $ p): answer whether a mode is currently set.
 
-        Reply is ESC [ ? Ps ; Pm $ y, where Pm is 0 (mode not recognised),
+        Reply is ESC [ ? Ps ; Pm $ y, where Pm is 0 (mode not recognized),
         1 (set) or 2 (reset). Apps use this to check a mode instead of
         assuming, so answering 0 for something we don't have is the honest
         reply — claiming "reset" would imply we know the mode.
@@ -717,7 +746,7 @@ class Terminal:
         if not body.isdigit():
             return
         mode = int(body)
-        state = 0  # not recognised
+        state = 0  # not recognized
         if private:
             known = {
                 1: lambda: self.cursor_keys_app,
@@ -737,20 +766,19 @@ class Terminal:
                 1003: lambda: self.mouse_mode == 1003,
                 1006: lambda: self.mouse_sgr,
                 2004: lambda: self.bracketed_paste,
-                66: lambda: self.keypad_app,      # DECNKM
-                67: lambda: self.backarrow_bs,    # DECBKM
+                66: lambda: self.keypad_app,  # DECNKM
+                67: lambda: self.backarrow_bs,  # DECBKM
             }
             if mode in known:
                 state = 1 if known[mode]() else 2
         else:
             ansi_known = {
-                4: lambda: self.insert_mode,      # IRM
-                20: lambda: self.newline_mode,    # LNM
+                4: lambda: self.insert_mode,  # IRM
+                20: lambda: self.newline_mode,  # LNM
             }
             if mode in ansi_known:
                 state = 1 if ansi_known[mode]() else 2
-        self.responses.append(
-            "\x1b[%s%d;%d$y" % ("?" if private else "", mode, state))
+        self.responses.append("\x1b[%s%d;%d$y" % ("?" if private else "", mode, state))
 
     def set_cursor_style(self, n):
         """DECSCUSR (ESC [ n SP q): let an app pick the caret shape and blink.
@@ -771,10 +799,19 @@ class Terminal:
     # The rendition state DECSC carries along with the cursor. A real VT saves
     # the selective-erase attribute (DECSCA) here too, so it rides along with a
     # DECSC/DECRC pair the same way the SGR attributes do.
-    _SGR_ATTRS = ("current_fg", "current_bg", "current_bold", "current_dim",
-                  "current_italic", "current_underline", "current_reverse",
-                  "current_strike", "current_conceal", "current_blink",
-                  "current_protected")
+    _SGR_ATTRS = (
+        "current_fg",
+        "current_bg",
+        "current_bold",
+        "current_dim",
+        "current_italic",
+        "current_underline",
+        "current_reverse",
+        "current_strike",
+        "current_conceal",
+        "current_blink",
+        "current_protected",
+    )
 
     def save_cursor(self):
         """DECSC (ESC 7).
@@ -840,8 +877,9 @@ class Terminal:
             self.scrollback.clear()
             self.scroll_offset = 0
             self.images = [im for im in self.images if im.alt != self.alt_screen]
-            self.zones = {zid: z for zid, z in self.zones.items()
-                          if z.alt != self.alt_screen}
+            self.zones = {
+                zid: z for zid, z in self.zones.items() if z.alt != self.alt_screen
+            }
         else:  # 0: cursor -> end of screen
             self.erase_line(0)
             for y in range(self.cursor.y + 1, self.height):
@@ -850,10 +888,14 @@ class Terminal:
     def _clear_live_images(self):
         """Remove images and zones sitting on the current live screen (ED 2)."""
         live = self.first_line_no + len(self.scrollback)
-        self.images = [im for im in self.images
-                       if im.alt != self.alt_screen or im.top_line < live]
-        self.zones = {zid: z for zid, z in self.zones.items()
-                      if z.alt != self.alt_screen or z.top_line < live}
+        self.images = [
+            im for im in self.images if im.alt != self.alt_screen or im.top_line < live
+        ]
+        self.zones = {
+            zid: z
+            for zid, z in self.zones.items()
+            if z.alt != self.alt_screen or z.top_line < live
+        }
 
     def set_char_protection(self, mode):
         """DECSCA (ESC [ Ps " q): mark following glyphs erase-protected.
@@ -861,9 +903,9 @@ class Terminal:
         Ps 1 protects; Ps 0 or 2 unprotects. This is deliberately separate from
         SGR — SGR 0 does not clear it — because a form draws its fixed labels
         protected, then lets the user type into the unprotected fields, and a
-        stray colour reset in the middle mustn't unprotect the labels.
+        stray color reset in the middle mustn't unprotect the labels.
         """
-        self.current_protected = (mode == 1)
+        self.current_protected = mode == 1
 
     def _erase_unprotected(self, row, x0, x1):
         for x in range(x0, min(x1, self.width)):
@@ -873,24 +915,24 @@ class Terminal:
     def selective_erase_line(self, mode=0, y=None):
         """DECSEL (ESC [ ? Ps K): like EL, but leaves protected cells alone."""
         row = self.screen[self.cursor.y if y is None else y]
-        if mode == 1:      # start of line -> cursor
+        if mode == 1:  # start of line -> cursor
             x0, x1 = 0, self.cursor.x + 1
-        elif mode == 2:    # whole line
+        elif mode == 2:  # whole line
             x0, x1 = 0, self.width
-        else:              # 0: cursor -> end of line
+        else:  # 0: cursor -> end of line
             x0, x1 = self.cursor.x, self.width
         self._erase_unprotected(row, x0, x1)
 
     def selective_erase_display(self, mode=0):
         """DECSED (ESC [ ? Ps J): like ED, but leaves protected cells alone."""
-        if mode == 1:      # start of screen -> cursor
+        if mode == 1:  # start of screen -> cursor
             for y in range(self.cursor.y):
                 self._erase_unprotected(self.screen[y], 0, self.width)
             self.selective_erase_line(1)
         elif mode in (2, 3):  # whole screen (scrollback isn't protectable)
             for y in range(self.height):
                 self._erase_unprotected(self.screen[y], 0, self.width)
-        else:              # 0: cursor -> end of screen
+        else:  # 0: cursor -> end of screen
             self.selective_erase_line(0)
             for y in range(self.cursor.y + 1, self.height):
                 self._erase_unprotected(self.screen[y], 0, self.width)
@@ -904,13 +946,13 @@ class Terminal:
         clearing the user's screen. The reset set follows the VT220 manual —
         notably DECAWM ends up OFF, and the DECSC save slot is cleared.
         """
-        self.origin_mode = False       # DECOM
-        self.insert_mode = False       # IRM
-        self.autowrap = False          # DECAWM (per the VT220 manual)
-        self.cursor_keys_app = False   # DECCKM
-        self.keypad_app = False        # DECNKM
-        self.backarrow_bs = False      # DECBKM
-        self.cursor.visible = True     # DECTCEM
+        self.origin_mode = False  # DECOM
+        self.insert_mode = False  # IRM
+        self.autowrap = False  # DECAWM (per the VT220 manual)
+        self.cursor_keys_app = False  # DECCKM
+        self.keypad_app = False  # DECNKM
+        self.backarrow_bs = False  # DECBKM
+        self.cursor.visible = True  # DECTCEM
         self.current_protected = False  # DECSCA
         self.single_shift = None
         self.scroll_top, self.scroll_bottom = 0, self.height - 1
@@ -1092,7 +1134,7 @@ class Terminal:
     def _yt_gradient(self, rest):
         """YT;gradient — begin a true gradient over following text, or 'off'.
 
-        Bare fields are colour stops; 'key:value' fields are options. Also
+        Bare fields are color stops; 'key:value' fields are options. Also
         cleared by SGR 0, so it composes with an ordinary attribute reset."""
         fields = [f.strip() for f in rest.split(";") if f.strip()]
         if not fields or fields[0].lower() == "off":
@@ -1112,14 +1154,14 @@ class Terminal:
     def _prune_images(self):
         """Drop images whose whole span has scrolled out of history."""
         floor = self.first_line_no
-        self.images = [im for im in self.images
-                       if im.top_line + im.rows > floor]
+        self.images = [im for im in self.images if im.top_line + im.rows > floor]
 
     def _prune_zones(self):
         """Drop zones whose whole span has scrolled out of history."""
         floor = self.first_line_no
-        self.zones = {zid: z for zid, z in self.zones.items()
-                      if z.top_line + z.h > floor}
+        self.zones = {
+            zid: z for zid, z in self.zones.items() if z.top_line + z.h > floor
+        }
 
     def _anchor_row(self, y):
         """A screen row -> an absolute line number that survives scrolling."""
@@ -1144,8 +1186,9 @@ class Terminal:
         if action == "delete":
             wanted = opts.get("id", "")
             if wanted == "*":
-                self.zones = {zid: z for zid, z in self.zones.items()
-                              if z.alt != self.alt_screen}
+                self.zones = {
+                    zid: z for zid, z in self.zones.items() if z.alt != self.alt_screen
+                }
             elif wanted.isdigit():
                 self.zones.pop(int(wanted), None)
             return
@@ -1157,8 +1200,7 @@ class Terminal:
 
         if action == "create" or zone is None:
             x, y, w, h = geometry_from(opts, None)
-            zone = Zone(zone_id, self._anchor_row(y or 0), x, w, h,
-                        self.alt_screen)
+            zone = Zone(zone_id, self._anchor_row(y or 0), x, w, h, self.alt_screen)
             self.zones[zone_id] = zone
         else:
             # update / move: only re-anchor when a row was actually given.
@@ -1191,8 +1233,7 @@ class Terminal:
             if wanted.isdigit():
                 self.images = [im for im in self.images if im.id != int(wanted)]
             else:
-                self.images = [im for im in self.images
-                               if im.alt != self.alt_screen]
+                self.images = [im for im in self.images if im.alt != self.alt_screen]
             return
 
         loaded = load_image(path=opts.get("path"), data=opts.get("data"))
@@ -1209,7 +1250,7 @@ class Terminal:
         if inline:
             rows = 1
 
-        if opts.get("id", "").isdigit():   # a named image replaces its previous self
+        if opts.get("id", "").isdigit():  # a named image replaces its previous self
             img_id = int(opts["id"])
             self.images = [im for im in self.images if im.id != img_id]
         else:
@@ -1219,9 +1260,20 @@ class Terminal:
         if fit not in ("contain", "fill", "cover"):
             fit = "contain"
         top_line = self.first_line_no + len(self.scrollback) + self.cursor.y
-        self.images.append(ImagePlacement(
-            img_id, top_line, self.cursor.x, cols, rows, rgba, iw, ih,
-            self.alt_screen, fit))
+        self.images.append(
+            ImagePlacement(
+                img_id,
+                top_line,
+                self.cursor.x,
+                cols,
+                rows,
+                rgba,
+                iw,
+                ih,
+                self.alt_screen,
+                fit,
+            )
+        )
 
         if inline:
             self.cursor.x = min(self.width - 1, self.cursor.x + cols)
@@ -1616,7 +1668,7 @@ class Terminal:
             # DEC Special Graphics: plain ASCII becomes line-drawing.
             char = DEC_GRAPHICS.get(char, char)
         elif charset == "A" and char == "#":
-            char = "£"   # UK national set: '#' is where the pound sign lives
+            char = "£"  # UK national set: '#' is where the pound sign lives
 
         w = char_width(char)
         if w == 0:
@@ -1644,7 +1696,7 @@ class Terminal:
 
         x, y = self.cursor.x, self.cursor.y
         if self.insert_mode:
-            self.insert_chars(w)   # IRM: shove the rest of the line right
+            self.insert_chars(w)  # IRM: shove the rest of the line right
         self.screen[y][x] = self._new_cell(char, width=w)
         if w == 2 and x + 1 < self.width:
             # Trailing spacer: same background, no glyph of its own.

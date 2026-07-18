@@ -22,6 +22,7 @@ out here only to keep the prototype focused on proving the framework swap.
 # per-call checking off is the standard fix for sharing one context between the
 # two — must happen before OpenGL.GL is imported anywhere.
 import OpenGL
+
 OpenGL.ERROR_CHECKING = False
 OpenGL.ERROR_LOGGING = False
 
@@ -57,15 +58,15 @@ GUTTER = 2
 DIM_FACTOR = 0.55
 CURSOR_COLOR = (0.90, 0.92, 0.98)
 CURSOR_THICK_PX = 2.0
-CURSOR_BLINK_PERIOD = 1.2   # seconds for one on->off->on cycle
-CURSOR_BLINK_DELAY = 0.5    # stay solid this long after activity
-HEADER = 40            # tab-strip height (matches app.py HEADER_H)
+CURSOR_BLINK_PERIOD = 1.2  # seconds for one on->off->on cycle
+CURSOR_BLINK_DELAY = 0.5  # stay solid this long after activity
+HEADER = 40  # tab-strip height (matches app.py HEADER_H)
 WHEEL_LINES = 3
 
 
 def _hex(h):
     h = h.lstrip("#")
-    return tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    return tuple(int(h[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
 
 
 def make_logo_image(size=64):
@@ -73,33 +74,43 @@ def make_logo_image(size=64):
     matching app.py's make_logo. Used for the GLFW window icon."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([0, 0, size - 1, size - 1], radius=size * 0.22,
-                        fill=(70, 120, 242, 255))
+    d.rounded_rectangle(
+        [0, 0, size - 1, size - 1], radius=size * 0.22, fill=(70, 120, 242, 255)
+    )
     w = max(2, int(size * 0.09))
     white = (255, 255, 255, 255)
-    d.line([(size * 0.27, size * 0.33), (size * 0.45, size * 0.51),
-            (size * 0.27, size * 0.69)], fill=white, width=w, joint="curve")
-    d.line([(size * 0.54, size * 0.69), (size * 0.75, size * 0.69)],
-           fill=white, width=w)
+    d.line(
+        [
+            (size * 0.27, size * 0.33),
+            (size * 0.45, size * 0.51),
+            (size * 0.27, size * 0.69),
+        ],
+        fill=white,
+        width=w,
+        joint="curve",
+    )
+    d.line(
+        [(size * 0.54, size * 0.69), (size * 0.75, size * 0.69)], fill=white, width=w
+    )
     return img
 
 
 # The exact PySide6 chrome palette (app.py), so the two builds look identical.
-UI_BG = _hex("#0f0f14")          # terminal surface + the selected tab
-UI_STRIP = _hex("#17171f")       # the tab strip behind the tabs
+UI_BG = _hex("#0f0f14")  # terminal surface + the selected tab
+UI_STRIP = _hex("#17171f")  # the tab strip behind the tabs
 UI_TAB_HOVER = _hex("#22222e")
-UI_TEXT = _hex("#9a9aa8")        # inactive tab text
+UI_TEXT = _hex("#9a9aa8")  # inactive tab text
 UI_TEXT_HOVER = _hex("#d6d6e2")
 UI_TEXT_ACTIVE = _hex("#ffffff")
-UI_ACCENT = _hex("#5a7fe0")      # 2px top border on the selected tab
+UI_ACCENT = _hex("#5a7fe0")  # 2px top border on the selected tab
 UI_CLOSE_HOVER = _hex("#c4404a")
 UI_DIALOG_BG = _hex("#14141b")
 UI_HINT = _hex("#7a7a88")
 
-BG_COLOR = UI_BG                 # terminal clear colour == the selected-tab fill
+BG_COLOR = UI_BG  # terminal clear colour == the selected-tab fill
 
 FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
-UI_FONT_PX = 18.0                # Dear ImGui chrome font size
+UI_FONT_PX = 18.0  # Dear ImGui chrome font size
 
 VERTEX_SHADER = """
 #version 330
@@ -191,10 +202,15 @@ def registry_path():
     if sys.platform != "win32":
         return []
     import winreg
+
     entries = []
-    for root, key in ((winreg.HKEY_LOCAL_MACHINE,
-                       r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
-                      (winreg.HKEY_CURRENT_USER, "Environment")):
+    for root, key in (
+        (
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        ),
+        (winreg.HKEY_CURRENT_USER, "Environment"),
+    ):
         try:
             with winreg.OpenKey(root, key) as handle:
                 value, kind = winreg.QueryValueEx(handle, "Path")
@@ -210,9 +226,11 @@ def shell_env():
     env = dict(os.environ)
     inherited = [p for p in env.get("PATH", "").split(os.pathsep) if p]
     seen = {p.lower().rstrip("\\") for p in inherited}
-    extra = [p for p in registry_path()
-             if p.lower().rstrip("\\") not in seen
-             and not seen.add(p.lower().rstrip("\\"))]
+    extra = [
+        p
+        for p in registry_path()
+        if p.lower().rstrip("\\") not in seen and not seen.add(p.lower().rstrip("\\"))
+    ]
     if extra:
         env["PATH"] = os.pathsep.join(inherited + extra)
     return env
@@ -228,13 +246,17 @@ class Session:
         self.alive = True
         self.title = CONFIG.shell
         try:
-            self.pty = PtyProcess.spawn([CONFIG.shell], dimensions=(rows, cols),
-                                        env=shell_env())
+            self.pty = PtyProcess.spawn(
+                [CONFIG.shell], dimensions=(rows, cols), env=shell_env()
+            )
             threading.Thread(target=self._reader, daemon=True).start()
         except Exception as exc:
             self.pty = None
-            self.term.write("\x1b[31mYoTerm: couldn't start %s\x1b[0m\r\n  %s\r\n"
-                            % (CONFIG.shell, exc), end="")
+            self.term.write(
+                "\x1b[31mYoTerm: couldn't start %s\x1b[0m\r\n  %s\r\n"
+                % (CONFIG.shell, exc),
+                end="",
+            )
 
     def _reader(self):
         try:
@@ -305,12 +327,17 @@ def _arrow(term, letter):
 def key_to_bytes(term, key, mods):
     ctrl = bool(mods & glfw.MOD_CONTROL)
     special = {
-        glfw.KEY_ENTER: "\r", glfw.KEY_KP_ENTER: "\r",
-        glfw.KEY_BACKSPACE: "\x7f", glfw.KEY_TAB: "\t",
+        glfw.KEY_ENTER: "\r",
+        glfw.KEY_KP_ENTER: "\r",
+        glfw.KEY_BACKSPACE: "\x7f",
+        glfw.KEY_TAB: "\t",
         glfw.KEY_ESCAPE: "\x1b",
-        glfw.KEY_UP: _arrow(term, "A"), glfw.KEY_DOWN: _arrow(term, "B"),
-        glfw.KEY_RIGHT: _arrow(term, "C"), glfw.KEY_LEFT: _arrow(term, "D"),
-        glfw.KEY_HOME: _arrow(term, "H"), glfw.KEY_END: _arrow(term, "F"),
+        glfw.KEY_UP: _arrow(term, "A"),
+        glfw.KEY_DOWN: _arrow(term, "B"),
+        glfw.KEY_RIGHT: _arrow(term, "C"),
+        glfw.KEY_LEFT: _arrow(term, "D"),
+        glfw.KEY_HOME: _arrow(term, "H"),
+        glfw.KEY_END: _arrow(term, "F"),
         glfw.KEY_DELETE: "\x1b[3~",
     }
     if key in special:
@@ -330,8 +357,7 @@ class YoTermGlfw:
         glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
         if os.environ.get("YOTERM_HEADLESS"):
             glfw.window_hint(glfw.VISIBLE, glfw.FALSE)  # offscreen for tests
-        self.window = glfw.create_window(1000, 640, "YoTerm",
-                                         None, None)
+        self.window = glfw.create_window(1000, 640, "YoTerm", None, None)
         if not self.window:
             glfw.terminate()
             raise SystemExit("GLFW window creation failed")
@@ -339,7 +365,8 @@ class YoTermGlfw:
         glfw.swap_interval(1)
         try:  # the YoTerm mark as the taskbar / titlebar icon
             glfw.set_window_icon(
-                self.window, 2, [make_logo_image(64), make_logo_image(32)])
+                self.window, 2, [make_logo_image(64), make_logo_image(32)]
+            )
         except Exception:
             pass
 
@@ -350,62 +377,78 @@ class YoTermGlfw:
         self.cell_h = max(1, round(self.atlas.glyph_h / SUPERSAMPLE))
         self._atlas_cursor = 0
         self._color_cache = {}
-        self._start = time.monotonic()   # for animated (cycling) gradients
+        self._start = time.monotonic()  # for animated (cycling) gradients
         self._cursor_active = self._start  # caret holds solid, then blinks
 
-        self.program = self.ctx.program(vertex_shader=VERTEX_SHADER,
-                                        fragment_shader=FRAGMENT_SHADER)
+        self.program = self.ctx.program(
+            vertex_shader=VERTEX_SHADER, fragment_shader=FRAGMENT_SHADER
+        )
         self.program["tex"] = 0
-        self.texture = self.ctx.texture((self.atlas.width, self.atlas.height), 4,
-                                        self.atlas.image.tobytes())
+        self.texture = self.ctx.texture(
+            (self.atlas.width, self.atlas.height), 4, self.atlas.image.tobytes()
+        )
         self.texture.build_mipmaps()
         self.texture.anisotropy = self.ctx.max_anisotropy
         self.quad_vbo = self.ctx.buffer(RectangleBuilder.CORNERS)
         self.vbo = self.ctx.buffer(reserve=4_000_000)
         self.vao = self.ctx.vertex_array(
             self.program,
-            [(self.quad_vbo, "2f", "in_corner"),
-             (self.vbo, "2f 2f 3f 2f 2f 1f/i", "in_pos", "in_size", "in_color",
-              "in_uv0", "in_uv1", "in_mode")],
+            [
+                (self.quad_vbo, "2f", "in_corner"),
+                (
+                    self.vbo,
+                    "2f 2f 3f 2f 2f 1f/i",
+                    "in_pos",
+                    "in_size",
+                    "in_color",
+                    "in_uv0",
+                    "in_uv1",
+                    "in_mode",
+                ),
+            ],
         )
 
         # YT;gradient — per-vertex coloured glyphs (own program + buffer).
-        self.grad_program = self.ctx.program(vertex_shader=GRAD_VERTEX_SHADER,
-                                             fragment_shader=GRAD_FRAGMENT_SHADER)
+        self.grad_program = self.ctx.program(
+            vertex_shader=GRAD_VERTEX_SHADER, fragment_shader=GRAD_FRAGMENT_SHADER
+        )
         self.grad_program["tex"] = 0
         self.grad_vbo = self.ctx.buffer(reserve=64_000)
         self.grad_vao = self.ctx.vertex_array(
             self.grad_program,
-            [(self.grad_vbo, "2f 2f 3f", "in_vpos", "in_vuv", "in_vcol")])
+            [(self.grad_vbo, "2f 2f 3f", "in_vpos", "in_vuv", "in_vcol")],
+        )
         self._grad_glyphs = []
         self._grad_bbox = {}
         self._grad_specs = {}
 
         # YT;img — one textured quad per image, cached by placement identity.
-        self.img_program = self.ctx.program(vertex_shader=IMAGE_VERTEX_SHADER,
-                                            fragment_shader=IMAGE_FRAGMENT_SHADER)
+        self.img_program = self.ctx.program(
+            vertex_shader=IMAGE_VERTEX_SHADER, fragment_shader=IMAGE_FRAGMENT_SHADER
+        )
         self.img_program["img"] = 1
         self.img_vbo = self.ctx.buffer(reserve=6 * 4 * 4)
         self.img_vao = self.ctx.vertex_array(
-            self.img_program, [(self.img_vbo, "2f 2f", "in_pos", "in_uv")])
+            self.img_program, [(self.img_vbo, "2f 2f", "in_pos", "in_uv")]
+        )
         self._img_textures = {}
 
         imgui.create_context()
         self._apply_theme()
-        self._load_ui_font()   # before GlfwRenderer, which bakes the atlas
+        self._load_ui_font()  # before GlfwRenderer, which bakes the atlas
         self.impl = GlfwRenderer(self.window, attach_callbacks=False)
         glfw.set_key_callback(self.window, self._key_cb)
         glfw.set_char_callback(self.window, self._char_cb)
         glfw.set_scroll_callback(self.window, self._scroll_cb)
         glfw.set_window_size_callback(self.window, lambda *_: None)
 
-        self._open_settings = False   # request to open the settings modal
-        self._open_menu = False       # request to open the ⌄ dropdown menu
-        self._open_about = False       # request to open the About modal
-        self._menu_x = 0.0             # x of the dropdown, under the ⌄ button
+        self._open_settings = False  # request to open the settings modal
+        self._open_menu = False  # request to open the ⌄ dropdown menu
+        self._open_about = False  # request to open the About modal
+        self._menu_x = 0.0  # x of the dropdown, under the ⌄ button
         self.sessions = []
         self.active = 0
-        self._region()          # sets self.cols/self.rows for the first tab
+        self._region()  # sets self.cols/self.rows for the first tab
         self.new_tab()
 
     # -- geometry ------------------------------------------------------------
@@ -459,7 +502,7 @@ class YoTermGlfw:
             else:
                 io.fonts.add_font_from_file_ttf(path, UI_FONT_PX)
         except Exception:
-            io.fonts.add_font_default()   # never leave the atlas empty
+            io.fonts.add_font_default()  # never leave the atlas empty
 
     # -- imgui theme (dark, matching the PySide6 dialog styling) -------------
     def _apply_theme(self):
@@ -510,7 +553,7 @@ class YoTermGlfw:
             return
         if action not in (glfw.PRESS, glfw.REPEAT):
             return
-        self._cursor_active = time.monotonic()   # typing holds the caret solid
+        self._cursor_active = time.monotonic()  # typing holds the caret solid
         ctrl = bool(mods & glfw.MOD_CONTROL)
         shift = bool(mods & glfw.MOD_SHIFT)
         s = self.cur()
@@ -521,15 +564,20 @@ class YoTermGlfw:
             self._open_settings = True
             return
         if ctrl and shift and key == glfw.KEY_T:
-            self.new_tab(); return
+            self.new_tab()
+            return
         if ctrl and shift and key == glfw.KEY_W:
-            self.close_tab(self.active); return
+            self.close_tab(self.active)
+            return
         if ctrl and key in (glfw.KEY_EQUAL, glfw.KEY_KP_ADD):
-            self.set_font(self.font_px + 1); return
+            self.set_font(self.font_px + 1)
+            return
         if ctrl and key in (glfw.KEY_MINUS, glfw.KEY_KP_SUBTRACT):
-            self.set_font(self.font_px - 1); return
+            self.set_font(self.font_px - 1)
+            return
         if ctrl and key == glfw.KEY_0:
-            self.set_font(CONFIG.font_size); return
+            self.set_font(CONFIG.font_size)
+            return
         if ctrl and shift and key == glfw.KEY_C:
             sel = None  # selection not implemented in the prototype
             return
@@ -539,9 +587,11 @@ class YoTermGlfw:
                 s.send(text.decode() if isinstance(text, bytes) else text)
             return
         if key == glfw.KEY_PAGE_UP:
-            s.term.scroll_up(max(1, self.rows - 1)); return
+            s.term.scroll_up(max(1, self.rows - 1))
+            return
         if key == glfw.KEY_PAGE_DOWN:
-            s.term.scroll_down(max(1, self.rows - 1)); return
+            s.term.scroll_down(max(1, self.rows - 1))
+            return
         seq = key_to_bytes(s.term, key, mods)
         if seq is not None:
             s.send(seq)
@@ -565,7 +615,7 @@ class YoTermGlfw:
         s = self.cur()
         if s is None:
             return
-        if s.term.alt_screen:                      # pagers: wheel -> arrows
+        if s.term.alt_screen:  # pagers: wheel -> arrows
             s.send(_arrow(s.term, "A" if yoff > 0 else "B") * WHEEL_LINES)
         elif yoff > 0:
             s.term.scroll_up(WHEEL_LINES)
@@ -582,8 +632,9 @@ class YoTermGlfw:
         self.cell_w = max(1, round(self.atlas.glyph_w / SUPERSAMPLE))
         self.cell_h = max(1, round(self.atlas.glyph_h / SUPERSAMPLE))
         self.texture.release()
-        self.texture = self.ctx.texture((self.atlas.width, self.atlas.height), 4,
-                                        self.atlas.image.tobytes())
+        self.texture = self.ctx.texture(
+            (self.atlas.width, self.atlas.height), 4, self.atlas.image.tobytes()
+        )
         self.texture.build_mipmaps()
         self.texture.anisotropy = self.ctx.max_anisotropy
         self._atlas_cursor = len(self.atlas.written)
@@ -601,7 +652,11 @@ class YoTermGlfw:
         key = (cell.fg, cell.bg, cell.reverse, cell.dim, invert)
         hit = self._color_cache.get(key)
         if hit is None:
-            fg = cell.fg if isinstance(cell.fg, tuple) else PALETTE.get(cell.fg, PALETTE["default"])
+            fg = (
+                cell.fg
+                if isinstance(cell.fg, tuple)
+                else PALETTE.get(cell.fg, PALETTE["default"])
+            )
             if cell.bg == "default":
                 bg = None
             elif isinstance(cell.bg, tuple):
@@ -648,8 +703,13 @@ class YoTermGlfw:
                 if x >= width:
                     break
                 char = cell.char
-                if (char == " " and cell.bg == "default" and not cell.reverse
-                        and not cell.underline and not cell.strike):
+                if (
+                    char == " "
+                    and cell.bg == "default"
+                    and not cell.reverse
+                    and not cell.underline
+                    and not cell.strike
+                ):
                     continue
                 fg, bgc = colors_for(cell)
                 rx = xs[x]
@@ -658,8 +718,9 @@ class YoTermGlfw:
                 if cell.width == 0:
                     continue
                 if char != " " and not cell.conceal:
-                    u0, v0, u1, v1, is_color = atlas_uv(char, bold=cell.bold,
-                                                        italic=cell.italic)
+                    u0, v0, u1, v1, is_color = atlas_uv(
+                        char, bold=cell.bold, italic=cell.italic
+                    )
                     gw = rw * 2 if cell.width == 2 else rw
                     if cell.grad is not None and not is_color:
                         gid = id(cell.grad)
@@ -669,14 +730,19 @@ class YoTermGlfw:
                         if bb is None:
                             grad_bbox[gid] = [rx, ry, x1p, y1p]
                         else:
-                            if rx < bb[0]: bb[0] = rx
-                            if ry < bb[1]: bb[1] = ry
-                            if x1p > bb[2]: bb[2] = x1p
-                            if y1p > bb[3]: bb[3] = y1p
+                            if rx < bb[0]:
+                                bb[0] = rx
+                            if ry < bb[1]:
+                                bb[1] = ry
+                            if x1p > bb[2]:
+                                bb[2] = x1p
+                            if y1p > bb[3]:
+                                bb[3] = y1p
                         grad_glyphs.append((gid, rx, ry, gw, rh, u0, v0, u1, v1))
                     else:
-                        glyphs.add(rx, ry, gw, rh, fg, u0, v0, u1, v1,
-                                   1.0 if is_color else 0.0)
+                        glyphs.add(
+                            rx, ry, gw, rh, fg, u0, v0, u1, v1, 1.0 if is_color else 0.0
+                        )
                 if cell.underline:
                     glyphs.add(rx, ry, rw, ul_h, fg, su0, sv0, su1, sv1)
                 if cell.strike:
@@ -693,10 +759,10 @@ class YoTermGlfw:
         """Caret on/off: solid while you're active, then blink after a pause —
         unless DECSCUSR asked for a steady caret or blinking is off."""
         cur = term.cursor
-        if not cur.blink:                 # DECSCUSR steady shapes
+        if not cur.blink:  # DECSCUSR steady shapes
             return True
         since = time.monotonic() - self._cursor_active
-        if since < CURSOR_BLINK_DELAY:    # hold solid right after activity
+        if since < CURSOR_BLINK_DELAY:  # hold solid right after activity
             return True
         return int(since / (CURSOR_BLINK_PERIOD / 2.0)) % 2 == 0
 
@@ -738,7 +804,7 @@ class YoTermGlfw:
             self.texture.build_mipmaps()
 
         self.texture.use(0)
-        data = self._build(s.term)   # also fills self._grad_glyphs / bbox / specs
+        data = self._build(s.term)  # also fills self._grad_glyphs / bbox / specs
         if data.count:
             buf = data.buffer()
             need = len(buf) * 4
@@ -763,11 +829,22 @@ class YoTermGlfw:
             grad = self._grad_specs[gid]
             rad = math.radians(grad.angle)
             ax, ay = math.cos(rad), -math.sin(rad)
-            projs = (minx * ax + miny * ay, maxx * ax + miny * ay,
-                     maxx * ax + maxy * ay, minx * ax + maxy * ay)
+            projs = (
+                minx * ax + miny * ay,
+                maxx * ax + miny * ay,
+                maxx * ax + maxy * ay,
+                minx * ax + maxy * ay,
+            )
             pmin, pmax = min(projs), max(projs)
-            info[gid] = (grad, ax, ay, pmin, (pmax - pmin) or 1.0, grad.cycle,
-                         elapsed * grad.speed if grad.cycle else 0.0)
+            info[gid] = (
+                grad,
+                ax,
+                ay,
+                pmin,
+                (pmax - pmin) or 1.0,
+                grad.cycle,
+                elapsed * grad.speed if grad.cycle else 0.0,
+            )
         data = []
         for gid, rx, ry, gw, rh, u0, v0, u1, v1 in glyphs:
             grad, ax, ay, pmin, span, cycle, phase = info[gid]
@@ -782,9 +859,40 @@ class YoTermGlfw:
 
             x1, y1 = rx + gw, ry + rh
             c0, c1, c2, c3 = col(rx, ry), col(x1, ry), col(x1, y1), col(rx, y1)
-            data.extend((
-                rx, ry, u0, v0, *c0, x1, ry, u1, v0, *c1, x1, y1, u1, v1, *c2,
-                rx, ry, u0, v0, *c0, x1, y1, u1, v1, *c2, rx, y1, u0, v1, *c3))
+            data.extend(
+                (
+                    rx,
+                    ry,
+                    u0,
+                    v0,
+                    *c0,
+                    x1,
+                    ry,
+                    u1,
+                    v0,
+                    *c1,
+                    x1,
+                    y1,
+                    u1,
+                    v1,
+                    *c2,
+                    rx,
+                    ry,
+                    u0,
+                    v0,
+                    *c0,
+                    x1,
+                    y1,
+                    u1,
+                    v1,
+                    *c2,
+                    rx,
+                    y1,
+                    u0,
+                    v1,
+                    *c3,
+                )
+            )
         return array("f", data), len(glyphs) * 6
 
     def _render_gradients(self):
@@ -842,12 +950,40 @@ class YoTermGlfw:
             bt = 1.0 - row_top * sy
             bb = 1.0 - (row_top + im.rows) * sy
             if im.fit == "contain":
-                l, r, t, b = self._contain(bl, br, bt, bb,
-                                           self.region_w, self.region_h, im.iw, im.ih)
+                l, r, t, b = self._contain(
+                    bl, br, bt, bb, self.region_w, self.region_h, im.iw, im.ih
+                )
             else:
                 l, r, t, b = bl, br, bt, bb
-            quad = array("f", (l, b, 0.0, 1.0, r, b, 1.0, 1.0, r, t, 1.0, 0.0,
-                               l, b, 0.0, 1.0, r, t, 1.0, 0.0, l, t, 0.0, 0.0))
+            quad = array(
+                "f",
+                (
+                    l,
+                    b,
+                    0.0,
+                    1.0,
+                    r,
+                    b,
+                    1.0,
+                    1.0,
+                    r,
+                    t,
+                    1.0,
+                    0.0,
+                    l,
+                    b,
+                    0.0,
+                    1.0,
+                    r,
+                    t,
+                    1.0,
+                    0.0,
+                    l,
+                    t,
+                    0.0,
+                    0.0,
+                ),
+            )
             tex.use(1)
             self.img_vbo.orphan()
             self.img_vbo.write(quad)
@@ -877,10 +1013,14 @@ class YoTermGlfw:
         imgui.push_style_var(imgui.STYLE_WINDOW_PADDING, (0, 0))
         imgui.push_style_var(imgui.STYLE_WINDOW_ROUNDING, 0.0)
         imgui.push_style_color(imgui.COLOR_WINDOW_BACKGROUND, *UI_STRIP)
-        flags = (imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE
-                 | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_SCROLLBAR
-                 | imgui.WINDOW_NO_SAVED_SETTINGS
-                 | imgui.WINDOW_NO_BRING_TO_FRONT_ON_FOCUS)
+        flags = (
+            imgui.WINDOW_NO_TITLE_BAR
+            | imgui.WINDOW_NO_RESIZE
+            | imgui.WINDOW_NO_MOVE
+            | imgui.WINDOW_NO_SCROLLBAR
+            | imgui.WINDOW_NO_SAVED_SETTINGS
+            | imgui.WINDOW_NO_BRING_TO_FRONT_ON_FOCUS
+        )
         imgui.begin("##strip", flags=flags)
         self._draw_tabs(ww)
         imgui.end()
@@ -911,7 +1051,7 @@ class YoTermGlfw:
         close_req = None
 
         for i, s in enumerate(list(self.sessions)):
-            active = (i == self.active)
+            active = i == self.active
             label = s.title or "shell"
             tw = imgui.calc_text_size(label).x
             tab_w = max(150.0, min(240.0, pad_l + tw + 10 + close_sz + pad_r))
@@ -923,7 +1063,8 @@ class YoTermGlfw:
             imgui.set_cursor_screen_pos((x0, tab_top))
             imgui.invisible_button("tab%d" % i, tab_w - close_sz - 6, h)
             if imgui.is_item_clicked():
-                self.active = i; active = True
+                self.active = i
+                active = True
             tab_hover = imgui.is_item_hovered()
             ccx = x1 - pad_r - close_sz * 0.5
             imgui.set_cursor_screen_pos((ccx - close_sz * 0.5 - 3, tab_top + 6))
@@ -933,27 +1074,46 @@ class YoTermGlfw:
                 close_req = i
 
             if active:
-                dl.add_rect_filled(x0, tab_top, x1, tab_bot + 2,
-                                   self._u32(UI_BG), rounding, top_only)
-                dl.add_line(x0 + rounding, tab_top + 1.0, x1 - rounding,
-                            tab_top + 1.0, self._u32(UI_ACCENT), 2.0)
+                dl.add_rect_filled(
+                    x0, tab_top, x1, tab_bot + 2, self._u32(UI_BG), rounding, top_only
+                )
+                dl.add_line(
+                    x0 + rounding,
+                    tab_top + 1.0,
+                    x1 - rounding,
+                    tab_top + 1.0,
+                    self._u32(UI_ACCENT),
+                    2.0,
+                )
                 tcol = UI_TEXT_ACTIVE
             elif tab_hover:
-                dl.add_rect_filled(x0, tab_top, x1, tab_bot + 2,
-                                   self._u32(UI_TAB_HOVER), rounding, top_only)
+                dl.add_rect_filled(
+                    x0,
+                    tab_top,
+                    x1,
+                    tab_bot + 2,
+                    self._u32(UI_TAB_HOVER),
+                    rounding,
+                    top_only,
+                )
                 tcol = UI_TEXT_HOVER
             else:
                 tcol = UI_TEXT
 
             sz = imgui.calc_text_size(label)
             avail = tab_w - pad_l - close_sz - pad_r - 8
-            dl.add_text(x0 + pad_l, tab_top + (h - sz.y) * 0.5,
-                        self._u32(tcol), self._ellipsize(label, avail))
+            dl.add_text(
+                x0 + pad_l,
+                tab_top + (h - sz.y) * 0.5,
+                self._u32(tcol),
+                self._ellipsize(label, avail),
+            )
 
             cy = tab_top + h * 0.5
             if close_hover:
-                dl.add_rect_filled(ccx - 8, cy - 8, ccx + 8, cy + 8,
-                                   self._u32(UI_CLOSE_HOVER), 4.0)
+                dl.add_rect_filled(
+                    ccx - 8, cy - 8, ccx + 8, cy + 8, self._u32(UI_CLOSE_HOVER), 4.0
+                )
                 xcol = self._u32(UI_TEXT_ACTIVE)
             else:
                 xcol = self._u32(UI_TEXT_HOVER if active else UI_TEXT)
@@ -970,8 +1130,9 @@ class YoTermGlfw:
         if imgui.is_item_clicked():
             self.new_tab()
         if imgui.is_item_hovered():
-            dl.add_rect_filled(x, tab_top + 4, x + pw, tab_bot - 4,
-                               self._u32(UI_TAB_HOVER), 5.0)
+            dl.add_rect_filled(
+                x, tab_top + 4, x + pw, tab_bot - 4, self._u32(UI_TAB_HOVER), 5.0
+            )
         pcx, pcy = x + pw * 0.5, tab_top + h * 0.5
         dl.add_line(pcx - 5, pcy, pcx + 5, pcy, pc, 1.6)
         dl.add_line(pcx, pcy - 5, pcx, pcy + 5, pc, 1.6)
@@ -985,8 +1146,9 @@ class YoTermGlfw:
             self._open_menu = True
             self._menu_x = x
         if imgui.is_item_hovered():
-            dl.add_rect_filled(x, tab_top + 4, x + vw, tab_bot - 4,
-                               self._u32(UI_TAB_HOVER), 5.0)
+            dl.add_rect_filled(
+                x, tab_top + 4, x + vw, tab_bot - 4, self._u32(UI_TAB_HOVER), 5.0
+            )
         vcx, vcy = x + vw * 0.5, tab_top + h * 0.5 - 1
         dl.add_line(vcx - 4, vcy - 2, vcx, vcy + 2, pc, 1.6)
         dl.add_line(vcx, vcy + 2, vcx + 4, vcy - 2, pc, 1.6)
@@ -999,17 +1161,41 @@ class YoTermGlfw:
         matching app.py's make_logo (a solid tint stands in for the gradient —
         it's imperceptible at this size)."""
         r = size * 0.22
-        dl.add_rect_filled(x, y, x + size, y + size,
-                           imgui.get_color_u32_rgba(0.36, 0.47, 0.95, 1.0),
-                           r, imgui.DRAW_ROUND_CORNERS_ALL)
+        dl.add_rect_filled(
+            x,
+            y,
+            x + size,
+            y + size,
+            imgui.get_color_u32_rgba(0.36, 0.47, 0.95, 1.0),
+            r,
+            imgui.DRAW_ROUND_CORNERS_ALL,
+        )
         white = imgui.get_color_u32_rgba(1.0, 1.0, 1.0, 1.0)
         th = max(1.5, size * 0.09)
-        dl.add_line(x + size * 0.27, y + size * 0.33,
-                    x + size * 0.45, y + size * 0.51, white, th)
-        dl.add_line(x + size * 0.45, y + size * 0.51,
-                    x + size * 0.27, y + size * 0.69, white, th)
-        dl.add_line(x + size * 0.54, y + size * 0.69,
-                    x + size * 0.75, y + size * 0.69, white, th)
+        dl.add_line(
+            x + size * 0.27,
+            y + size * 0.33,
+            x + size * 0.45,
+            y + size * 0.51,
+            white,
+            th,
+        )
+        dl.add_line(
+            x + size * 0.45,
+            y + size * 0.51,
+            x + size * 0.27,
+            y + size * 0.69,
+            white,
+            th,
+        )
+        dl.add_line(
+            x + size * 0.54,
+            y + size * 0.69,
+            x + size * 0.75,
+            y + size * 0.69,
+            white,
+            th,
+        )
 
     def _main_menu(self):
         """The ⌄ dropdown — the same items and shortcuts as app.py's menu."""
@@ -1046,21 +1232,20 @@ class YoTermGlfw:
         try:
             if not os.path.exists(path):
                 config_module.save(CONFIG, path)
-            os.startfile(path)   # Windows: open in the default editor
+            os.startfile(path)  # Windows: open in the default editor
         except Exception:
             pass
 
     def _about_modal(self, ww, wh):
-        appearing = getattr(imgui, "APPEARING",
-                            getattr(imgui, "FIRST_USE_EVER", 0))
+        appearing = getattr(imgui, "APPEARING", getattr(imgui, "FIRST_USE_EVER", 0))
         if self._open_about:
             imgui.open_popup("About YoTerm")
             self._open_about = False
         imgui.set_next_window_position(ww * 0.5, wh * 0.5, appearing, 0.5, 0.5)
         imgui.push_style_var(imgui.STYLE_WINDOW_PADDING, (20, 18))
         visible, _ = imgui.begin_popup_modal(
-            "About YoTerm", True,
-            flags=imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE)
+            "About YoTerm", True, flags=imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE
+        )
         if visible:
             imgui.text("YoTerm")
             imgui.text_colored("A from-scratch GPU terminal for Windows", *UI_HINT)
@@ -1073,8 +1258,7 @@ class YoTermGlfw:
         imgui.pop_style_var(1)
 
     def _settings_modal(self, ww, wh):
-        appearing = getattr(imgui, "APPEARING",
-                            getattr(imgui, "FIRST_USE_EVER", 0))
+        appearing = getattr(imgui, "APPEARING", getattr(imgui, "FIRST_USE_EVER", 0))
         if self._open_settings:
             imgui.open_popup("Settings")
             self._open_settings = False
@@ -1088,7 +1272,8 @@ class YoTermGlfw:
         imgui.push_style_color(imgui.COLOR_TITLE_BACKGROUND_ACTIVE, *UI_STRIP)
 
         visible, _ = imgui.begin_popup_modal(
-            "Settings", True, flags=imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE)
+            "Settings", True, flags=imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE
+        )
         if visible:
             changed = self._settings_body()
             imgui.separator()
@@ -1122,18 +1307,22 @@ class YoTermGlfw:
                 ch, idx = imgui.combo(label, idx, list(choices))
                 if ch:
                     setattr(CONFIG, spec.name, list(choices)[idx])
-                    self._apply_setting(spec.name); changed = True
+                    self._apply_setting(spec.name)
+                    changed = True
             elif isinstance(value, bool):
                 ch, v = imgui.checkbox(label, value)
                 if ch:
                     setattr(CONFIG, spec.name, v)
-                    self._apply_setting(spec.name); changed = True
+                    self._apply_setting(spec.name)
+                    changed = True
             elif isinstance(value, int):
-                ch, v = imgui.slider_int(label, value,
-                                         meta.get("min", 1), meta.get("max", 100))
+                ch, v = imgui.slider_int(
+                    label, value, meta.get("min", 1), meta.get("max", 100)
+                )
                 if ch:
                     setattr(CONFIG, spec.name, v)
-                    self._apply_setting(spec.name); changed = True
+                    self._apply_setting(spec.name)
+                    changed = True
             help_text = meta.get("help")
             if help_text:
                 imgui.push_style_color(imgui.COLOR_TEXT, *UI_HINT)
@@ -1174,8 +1363,12 @@ class YoTermGlfw:
             self.ctx.detect_framebuffer().use()
             self.ctx.clear(*BG_COLOR)
             self.ctx.enable(moderngl.BLEND)
-            self.ctx.blend_func = (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA,
-                                   moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA)
+            self.ctx.blend_func = (
+                moderngl.SRC_ALPHA,
+                moderngl.ONE_MINUS_SRC_ALPHA,
+                moderngl.ONE,
+                moderngl.ONE_MINUS_SRC_ALPHA,
+            )
             self._render_terminal()
             self._render_chrome()
             glfw.swap_buffers(self.window)
