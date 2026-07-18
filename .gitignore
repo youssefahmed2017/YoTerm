@@ -1,0 +1,9 @@
+Vulpin/
+.claude/
+.venv/
+.idea/
+__pycache__/
+*.pyc
+*.pyo
+*.pyi
+

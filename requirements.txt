@@ -1,0 +1,4 @@
+PySide6>=6.11
+moderngl>=5.12
+pywinpty>=3.0
+Pillow>=12.0
