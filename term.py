@@ -6,6 +6,7 @@ import unicodedata
 from tools import char_width
 from ytseq import make_gradient
 from ytimg import load_image, fit_cells, ImagePlacement
+from ytzone import Zone, apply_style, geometry_from
 
 # Categories that combine onto a preceding glyph rather than occupying a cell:
 # non-spacing (Mn), enclosing (Me), and spacing-combining (Mc) marks. Other
@@ -284,6 +285,11 @@ class Terminal:
         self.cell_px = (8, 16)
         self._next_img_id = 1
 
+        # Zones (YT;zone): styled rectangles, keyed by the caller's id so an
+        # `update` is a cheap patch. Their ids are a separate namespace from
+        # images'. See docs/zones.md.
+        self.zones = {}
+
         # Scrolling region (DECSTBM), inclusive 0-based row bounds.
         self.scroll_top = 0
         self.scroll_bottom = height - 1
@@ -387,6 +393,7 @@ class Terminal:
                     self.scrollback.pop(0)
                     self.first_line_no += 1  # a line left history for good
                     self._prune_images()
+                    self._prune_zones()
                 elif self.scroll_offset > 0:
                     # Keep a scrolled-up view anchored as output streams in.
                     self.scroll_offset = min(
@@ -505,6 +512,7 @@ class Terminal:
             del self.scrollback[:trimmed]
             self.first_line_no += trimmed
             self._prune_images()
+            self._prune_zones()
         self.scroll_offset = min(self.scroll_offset, len(self.scrollback))
 
     def carriage(self):
@@ -643,6 +651,7 @@ class Terminal:
         self.scrollback.clear()
         self.first_line_no = 0
         self.images = []
+        self.zones = {}
         self.scroll_offset = 0
         self.scroll_top, self.scroll_bottom = 0, self.height - 1
         self.origin_mode = False
@@ -831,16 +840,20 @@ class Terminal:
             self.scrollback.clear()
             self.scroll_offset = 0
             self.images = [im for im in self.images if im.alt != self.alt_screen]
+            self.zones = {zid: z for zid, z in self.zones.items()
+                          if z.alt != self.alt_screen}
         else:  # 0: cursor -> end of screen
             self.erase_line(0)
             for y in range(self.cursor.y + 1, self.height):
                 self.screen[y] = self._blank_row()
 
     def _clear_live_images(self):
-        """Remove images sitting on the current live screen (used by ED 2)."""
+        """Remove images and zones sitting on the current live screen (ED 2)."""
         live = self.first_line_no + len(self.scrollback)
         self.images = [im for im in self.images
                        if im.alt != self.alt_screen or im.top_line < live]
+        self.zones = {zid: z for zid, z in self.zones.items()
+                      if z.alt != self.alt_screen or z.top_line < live}
 
     def set_char_protection(self, mode):
         """DECSCA (ESC [ Ps " q): mark following glyphs erase-protected.
@@ -1043,8 +1056,9 @@ class Terminal:
         self.scroll_offset = 0
         self.scroll_top = 0
         self.scroll_bottom = self.height - 1
-        # Images placed on the alt screen are ephemeral, like its text.
+        # Images and zones placed on the alt screen are ephemeral, like its text.
         self.images = [im for im in self.images if not im.alt]
+        self.zones = {zid: z for zid, z in self.zones.items() if not z.alt}
 
     def parse_osc(self, body):
         """OSC payload, 'Ps ; Pt'. 0 sets icon name + window title, 2 sets the
@@ -1072,6 +1086,8 @@ class Terminal:
             self._yt_gradient(rest)
         elif verb == "img":
             self._yt_image(rest)
+        elif verb == "zone":
+            self._yt_zone(rest)
 
     def _yt_gradient(self, rest):
         """YT;gradient — begin a true gradient over following text, or 'off'.
@@ -1098,6 +1114,59 @@ class Terminal:
         floor = self.first_line_no
         self.images = [im for im in self.images
                        if im.top_line + im.rows > floor]
+
+    def _prune_zones(self):
+        """Drop zones whose whole span has scrolled out of history."""
+        floor = self.first_line_no
+        self.zones = {zid: z for zid, z in self.zones.items()
+                      if z.top_line + z.h > floor}
+
+    def _anchor_row(self, y):
+        """A screen row -> an absolute line number that survives scrolling."""
+        return self.first_line_no + len(self.scrollback) + max(0, y)
+
+    def _yt_zone(self, rest):
+        """YT;zone — create / update / move / delete a styled rectangle.
+
+        Geometry is in cells; `y` is resolved once into an absolute line so the
+        zone scrolls with its text. Styling is a patch: only the fields actually
+        named are touched, which is what makes per-frame animation cheap.
+        """
+        fields = [f.strip() for f in rest.split(";") if f.strip()]
+        opts, action = {}, None
+        for field in fields:
+            if ":" in field:
+                key, _, value = field.partition(":")
+                opts[key.strip().lower()] = value.strip()
+            else:
+                action = field.lower()
+
+        if action == "delete":
+            wanted = opts.get("id", "")
+            if wanted == "*":
+                self.zones = {zid: z for zid, z in self.zones.items()
+                              if z.alt != self.alt_screen}
+            elif wanted.isdigit():
+                self.zones.pop(int(wanted), None)
+            return
+
+        if not opts.get("id", "").isdigit():
+            return  # every other verb needs an id
+        zone_id = int(opts["id"])
+        zone = self.zones.get(zone_id)
+
+        if action == "create" or zone is None:
+            x, y, w, h = geometry_from(opts, None)
+            zone = Zone(zone_id, self._anchor_row(y or 0), x, w, h,
+                        self.alt_screen)
+            self.zones[zone_id] = zone
+        else:
+            # update / move: only re-anchor when a row was actually given.
+            x, y, w, h = geometry_from(opts, zone)
+            zone.x, zone.w, zone.h = x, w, h
+            if y is not None:
+                zone.top_line = self._anchor_row(y)
+        apply_style(zone, opts)
 
     def _yt_image(self, rest):
         """YT;img — place a GPU-sampled image at the cursor, or 'del' one.

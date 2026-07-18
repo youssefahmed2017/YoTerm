@@ -444,6 +444,111 @@ void main() {
 }
 """
 
+# Zones (YT;zone): styled rectangles, one instance each, expanded from the same
+# shared unit quad as the glyph pass. Hundreds of zones must cost one draw call,
+# not hundreds -- an app redrawing a screen of cards every frame depends on it.
+#
+# Phase 2: a signed-distance-field rounded rect, computed per fragment, so the
+# CPU never rasterises a corner -- it uploads a rectangle, a radius, and some
+# colours, same as Phase 1. Gradient fill reads a small shared ramp texture
+# (one row per zone-with-a-gradient) rather than packing colour stops into
+# vertex attributes: that scales to any number of stops without bumping into
+# the ~16 vertex-attribute limit, and it's the same "texture, not per-pixel
+# CPU work" spirit as the rest of the renderer. See docs/zones.md.
+ZONE_RAMP_W = 128   # texels per gradient ramp (resolution along the ramp)
+ZONE_RAMP_H = 64    # rows: max zones with a *distinct* gradient drawn per frame
+
+ZONE_VERTEX_SHADER = """
+#version 330
+in vec2 in_corner;        // per-vertex: the shared unit quad, (0,0)..(1,1)
+in vec2 in_pos;           // per-instance: bottom-left in NDC
+in vec2 in_size;          // per-instance: width/height in NDC
+in vec4 in_color;         // fill colour (rgb; a already carries opacity)
+in float in_radius;       // corner radius, logical px
+in vec4 in_border_color;
+in float in_border_width; // logical px; 0 = no border
+in float in_angle;        // gradient angle, degrees (0 = left->right)
+in float in_ramp_row;     // row in the ramp texture, or < 0 for a solid fill
+
+uniform vec2 u_win;       // widget size, logical px -- converts NDC to px
+
+out vec2 v_local;         // fragment position relative to the zone centre, px
+out vec2 v_half;          // zone half-size, px
+flat out vec4 v_color;
+flat out float v_radius;
+flat out vec4 v_border_color;
+flat out float v_border_width;
+flat out float v_angle;
+flat out float v_ramp_row;
+
+void main() {
+    gl_Position = vec4(in_pos + in_corner * in_size, 0, 1);
+    // NDC spans [-1, 1] == u_win pixels, so 1 NDC unit == u_win/2 px.
+    v_half = in_size * u_win * 0.25;
+    v_local = (in_corner - vec2(0.5)) * in_size * u_win * 0.5;
+    v_color = in_color;
+    v_radius = in_radius;
+    v_border_color = in_border_color;
+    v_border_width = in_border_width;
+    v_angle = in_angle;
+    v_ramp_row = in_ramp_row;
+}
+"""
+
+ZONE_FRAGMENT_SHADER = """
+#version 330
+uniform sampler2D ramp_tex;
+
+in vec2 v_local;
+in vec2 v_half;
+flat in vec4 v_color;
+flat in float v_radius;
+flat in vec4 v_border_color;
+flat in float v_border_width;
+flat in float v_angle;
+flat in float v_ramp_row;
+out vec4 color;
+
+// Inigo Quilez's rounded-box SDF: negative inside, positive outside, in the
+// same units as p/b (here, logical px relative to the box centre).
+float sdRoundBox(vec2 p, vec2 b, float r) {
+    vec2 q = abs(p) - b + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+
+void main() {
+    float r = min(v_radius, min(v_half.x, v_half.y));
+    float d = sdRoundBox(v_local, v_half, r);
+    // ~1px antialiased edge; independent of zoom since everything is in px.
+    float shape_alpha = 1.0 - smoothstep(-1.0, 1.0, d);
+    if (shape_alpha <= 0.0) discard;
+
+    vec4 fill = v_color;
+    if (v_ramp_row >= 0.0) {
+        vec2 ax = vec2(cos(radians(v_angle)), -sin(radians(v_angle)));
+        vec2 c0 = vec2(-v_half.x, -v_half.y), c1 = vec2(v_half.x, -v_half.y);
+        vec2 c2 = vec2(v_half.x, v_half.y), c3 = vec2(-v_half.x, v_half.y);
+        float p0 = dot(c0, ax), p1 = dot(c1, ax);
+        float p2 = dot(c2, ax), p3 = dot(c3, ax);
+        float pmin = min(min(p0, p1), min(p2, p3));
+        float pmax = max(max(p0, p1), max(p2, p3));
+        float t = (dot(v_local, ax) - pmin) / max(pmax - pmin, 0.0001);
+        fill = texture(ramp_tex, vec2(clamp(t, 0.0, 1.0), (v_ramp_row + 0.5) / %(ramp_h)d.0));
+    }
+
+    float fill_mask = v_border_width > 0.0
+        ? 1.0 - smoothstep(-1.0, 1.0, d + v_border_width)
+        : 1.0;
+    vec3 rgb = mix(v_border_color.rgb, fill.rgb, fill_mask);
+    float a = mix(v_border_color.a, fill.a, fill_mask) * shape_alpha;
+    color = vec4(rgb, a);
+}
+""" % {"ramp_h": ZONE_RAMP_H}
+
+# 16 floats per zone instance: pos.xy, size.xy, color.rgba, radius, border.rgba,
+# border_width, angle, ramp_row.
+_ZONE_FLOATS = 16
+
 
 class TerminalWidget(QOpenGLWidget):
     """A GL-rendered terminal surface driving a live shell over a PTY."""
@@ -574,6 +679,27 @@ class TerminalWidget(QOpenGLWidget):
             [(self.img_vbo, "2f 2f", "in_pos", "in_uv")],
         )
 
+        # Zones: instanced, sharing the unit quad with the glyph pass.
+        self.zone_program = self.ctx.program(
+            vertex_shader=ZONE_VERTEX_SHADER,
+            fragment_shader=ZONE_FRAGMENT_SHADER,
+        )
+        self.zone_program["ramp_tex"] = 2   # unit 0 = glyph atlas, 1 = images
+        self.zone_vbo = self.ctx.buffer(reserve=64_000)
+        self.zone_vao = self.ctx.vertex_array(
+            self.zone_program,
+            [(self.quad_vbo, "2f", "in_corner"),
+             (self.zone_vbo, "2f 2f 4f 1f 4f 1f 1f 1f/i",
+              "in_pos", "in_size", "in_color", "in_radius",
+              "in_border_color", "in_border_width", "in_angle", "in_ramp_row")],
+        )
+        # Shared gradient-ramp atlas: one row per zone-with-a-gradient drawn
+        # this frame, rebuilt only when at least one is on screen.
+        self.zone_ramp = self.ctx.texture(
+            (ZONE_RAMP_W, ZONE_RAMP_H), 4,
+            b"\x00" * (ZONE_RAMP_W * ZONE_RAMP_H * 4))
+        self.zone_ramp.filter = (moderngl.LINEAR, moderngl.LINEAR)
+
         # Terminal grid + shell. Grid is sized in *logical* pixels so text
         # keeps a consistent visual size across DPIs.
         self.win_w, self.win_h = self.width(), self.height()
@@ -681,6 +807,10 @@ class TerminalWidget(QOpenGLWidget):
                 self.texture.write(rgba, viewport=(x, y, w, h))
             self.texture.build_mipmaps()
 
+        # Zones at z<=0 sit behind the text layer (a button's background), so
+        # they draw before the glyph batch. z>=1 goes on top, further down.
+        self._render_zones(above=False)
+
         total = self._static_quads + cursor.count
         if total:
             stride = RectangleBuilder.FLOATS_PER_QUAD * 4   # bytes per quad
@@ -701,6 +831,7 @@ class TerminalWidget(QOpenGLWidget):
         # top of the instanced pass. Both are their own programs.
         self._render_images()
         self._render_gradients()
+        self._render_zones(above=True)   # overlays: modals, tooltips, menus
 
     # ------------------------------------------------------------ PTY I/O
 
@@ -1056,6 +1187,97 @@ class TerminalWidget(QOpenGLWidget):
         frac = img_a / box_a       # image relatively taller: bars left/right
         mid, half = (l + r) / 2.0, (r - l) * frac / 2.0
         return mid - half, mid + half, t, b
+
+    def _build_zone_ramp(self, zones_with_gradient):
+        """One row per gradient, sampled across ZONE_RAMP_W texels. Returns
+        {id(zone): row}. Rebuilding this is cheap (<=32KB) so it happens
+        fresh each frame zones-with-gradients are on screen -- simpler than
+        cache invalidation, and correct for an animating (cycle:on) ramp."""
+        rows = zones_with_gradient[:ZONE_RAMP_H]
+        pixels = bytearray(ZONE_RAMP_W * ZONE_RAMP_H * 4)
+        row_of = {}
+        for row, z in enumerate(rows):
+            color_at = z.gradient.color_at
+            base = row * ZONE_RAMP_W * 4
+            for i in range(ZONE_RAMP_W):
+                r, g, b = color_at(i / (ZONE_RAMP_W - 1))
+                o = base + i * 4
+                pixels[o] = int(max(0, min(1, r)) * 255)
+                pixels[o + 1] = int(max(0, min(1, g)) * 255)
+                pixels[o + 2] = int(max(0, min(1, b)) * 255)
+                pixels[o + 3] = 255
+            row_of[id(z)] = row
+        self.zone_ramp.write(bytes(pixels))
+        return row_of
+
+    def _render_zones(self, above):
+        """Draw zones (YT;zone) as one instanced batch: a signed-distance
+        rounded rect per zone, radius/border/gradient all fragment-shader work.
+
+        `above` picks the layer: text lives at z=0 and wins ties, so zones with
+        z<=0 draw *before* the glyph pass and z>=1 draw after it (modals,
+        tooltips, overlays). See docs/zones.md.
+        """
+        term = self.term
+        if not term.zones:
+            return
+        alt = term.alt_screen
+        wanted = [z for z in term.zones.values()
+                  if z.alt == alt and (z.z >= 1) == above
+                  and (z.bg is not None or z.gradient is not None)]
+        if not wanted:
+            return
+        wanted.sort(key=lambda z: z.z)   # lower z first within the layer
+
+        top_abs = term.first_line_no + len(term.scrollback) - term.scroll_offset
+        sx = self.cell_w / self.win_w * 2.0
+        sy = self.cell_h / self.win_h * 2.0
+
+        visible = []
+        for z in wanted:
+            row_top = z.top_line - top_abs
+            if row_top + z.h <= 0 or row_top >= term.height:
+                continue                      # scrolled out of view
+            visible.append((z, row_top))
+        if not visible:
+            return
+
+        gradients = [z for z, _ in visible if z.gradient is not None]
+        row_of = self._build_zone_ramp(gradients) if gradients else {}
+
+        data = []
+        for z, row_top in visible:
+            left = z.x * sx - 1.0
+            right = (z.x + z.w) * sx - 1.0
+            top = 1.0 - row_top * sy
+            bottom = 1.0 - (row_top + z.h) * sy
+            fr, fg, fb = z.bg if z.bg is not None else (0.0, 0.0, 0.0)
+            if z.border is not None:
+                br, bg_, bb = z.border
+            else:
+                br, bg_, bb = 0.0, 0.0, 0.0
+            ramp_row = row_of.get(id(z), -1)
+            data.extend((
+                left, bottom, right - left, top - bottom,      # pos, size
+                fr, fg, fb, z.opacity,                          # fill colour
+                z.radius,
+                br, bg_, bb, z.opacity if z.border is not None else 0.0,
+                z.border_w,
+                z.gradient.angle if z.gradient is not None else 0.0,
+                float(ramp_row),
+            ))
+
+        count = len(data) // _ZONE_FLOATS
+        buf = array("f", data)
+        need = len(buf) * 4
+        if need > self.zone_vbo.size:
+            self.zone_vbo.orphan(need)
+        else:
+            self.zone_vbo.orphan()
+        self.zone_vbo.write(buf)
+        self.zone_ramp.use(2)
+        self.zone_program["u_win"] = (self.win_w, self.win_h)
+        self.zone_vao.render(moderngl.TRIANGLES, vertices=6, instances=count)
 
     def _render_images(self):
         """Draw placed images (YT;img), each as one textured quad pinned to its

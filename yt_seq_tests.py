@@ -19,7 +19,7 @@ import re
 import sys
 import time
 
-from ansi import out, raw_input_mode  # reuse the console plumbing
+from ansi import out, raw_input_mode, cursor_pos  # reuse the console plumbing
 
 ESC = "\x1b"
 ST = "\x1b\\"
@@ -206,6 +206,93 @@ def demo_images():
     pause(1.6)
 
 
+# --------------------------------------------------------------- zones
+
+def zone(payload):
+    return yt("zone;" + payload)
+
+
+def demo_zones():
+    title("Zones (YT;zone) — styled rectangles the GPU draws")
+    note("a zone is just a rectangle; text prints on top of it")
+
+    # A zone's `y` is an absolute screen row, not "wherever the cursor is", so
+    # print the rows first and then ask the terminal where they landed. That
+    # also proves the ordering doesn't matter: a z<=0 zone draws behind text
+    # whether it was created before or after the text was printed.
+    print()
+    print("        Install Package")
+    print()
+    pos = cursor_pos()
+    if pos is None:
+        print(f"  {ESC}[2m(no ESC[6n reply — skipping the zone demo){ESC}[0m")
+        return
+    top = pos[0] - 1 - 3            # 0-based row of the first of those 3 rows
+
+    out(zone(f"create;id:1;x:6;y:{top};w:28;h:3;bg:#3366ff"))
+    pause(1.2)
+
+    note("z orders zones; at equal z the TEXT wins, so a button just works")
+    out(zone(f"create;id:2;x:26;y:{top};w:16;h:3;bg:#c4404a;z:-1"))
+    print(f"  {ESC}[2m  ^ the red zone is z:-1, so the blue z:0 zone covers it "
+          f"where they overlap{ESC}[0m")
+    pause(1.6)
+
+    note("update is a patch — only the fields you name change")
+    out(zone("update;id:2;bg:#22c55e"))          # recolour, geometry untouched
+    pause(1.0)
+    out(zone("move;id:2;x:30"))                  # slide it right
+    pause(1.2)
+
+    note("z:1 puts a zone ABOVE the text — modals, tooltips, overlays")
+    print()
+    print("        this line gets covered by an overlay")
+    print()
+    pos = cursor_pos()
+    over = pos[0] - 1 - 3
+    out(zone(f"create;id:3;x:6;y:{over};w:44;h:3;bg:#7700ff;z:1;opacity:0.8"))
+    pause(1.8)
+
+    note("radius/border round the still-live button — the SDF is a fragment, "
+         "not a fake")
+    out(zone("update;id:1;radius:10;border:#88bbff;border_w:2"))
+    pause(1.8)
+
+
+def demo_zone_gradients():
+    title("Zone gradients — any number of stops, sampled per fragment")
+    note("a shared gradient-ramp texture, not vertex colours: any stop count works")
+
+    for _ in range(6):
+        print()
+    pos = cursor_pos()
+    if pos is None:
+        print(f"  {ESC}[2m(no ESC[6n reply — skipping){ESC}[0m")
+        return
+    top = pos[0] - 1 - 6
+
+    out(zone(f"create;id:10;x:2;y:{top};w:20;h:5;gradient:#00aaff,#ff00aa"))
+    out(zone(f"create;id:11;x:24;y:{top};w:20;h:5;radius:14;"
+             "gradient:#ffcc00,#ff0000,#7700ff;angle:20"))
+    pause(1.8)
+
+    note("a real UI card: 6-stop gradient, radius, border — still one YT;zone")
+    for _ in range(5):
+        print()
+    print("              Python")
+    print()
+    pos = cursor_pos()
+    if pos is None:
+        return
+    card_top = pos[0] - 1 - 3
+    out(zone(
+        f"create;id:12;x:4;y:{card_top};w:24;h:4;radius:4;"
+        "border:#3e0d90;border_w:1;"
+        "gradient:#3d0d8f@0.0,#4e24c3@0.35,#6542ff@0.55,#ac42ff@0.75,"
+        "#f74792@0.88,#fec723@1.0;angle:91"))
+    pause(0.4)
+
+
 # --------------------------------------------------------------- entry
 
 def main():
@@ -227,6 +314,8 @@ def main():
     demo_gradient_cycle()
     demo_gradient_reset()
     demo_images()
+    demo_zones()
+    demo_zone_gradients()
 
     print(f"\n{ESC}[1;32mDemo done.{ESC}[0m")
     return 0
