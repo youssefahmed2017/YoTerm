@@ -706,6 +706,13 @@ class TerminalWidget(QOpenGLWidget):
         self._selecting = False
         self._last_move_cell = None  # last cell a motion event was reported for
 
+        # OSC 8 hyperlinks: which target (if any) the mouse currently sits
+        # over, so we can show a pointing-hand cursor and underline it --
+        # Ctrl+click opens it. Always tracked regardless of whether an app
+        # has mouse reporting on, since it never sends anything to the shell.
+        self._hover_href = None
+        self.setMouseTracking(True)
+
     # ------------------------------------------------------------ GL lifecycle
 
     def initializeGL(self):
@@ -941,6 +948,7 @@ class TerminalWidget(QOpenGLWidget):
 
         cursor = RectangleBuilder()
         self._add_cursor(cursor)
+        self._add_hover_link(cursor)
         self._last_cursor_state = self._cursor_state()
 
         # Upload glyphs this context hasn't seen yet, then refresh mipmaps once.
@@ -1046,11 +1054,9 @@ class TerminalWidget(QOpenGLWidget):
             self._last_title = self.term.title
             self.titleChanged.emit(self.term.title)
 
-        # Any-motion tracking (?1003, used for hover) needs bare move events,
-        # which Qt only delivers with mouse tracking enabled.
-        want_tracking = self.term.mouse_mode == 1003
-        if want_tracking != self.hasMouseTracking():
-            self.setMouseTracking(want_tracking)
+        # Mouse tracking is always on now (set once in __init__): bare motion
+        # is needed both for an app's ?1003 any-motion reporting and for
+        # OSC 8 hyperlink hover, so there's no mode-dependent toggle anymore.
 
         # Only repaint when something actually changed: the screen, the caret,
         # or an animated gradient. Note update(), *not* _invalidate(): a cycling
@@ -1251,12 +1257,16 @@ class TerminalWidget(QOpenGLWidget):
                     break
                 char = cell.char
                 # Fast path: a plain empty cell contributes nothing at all.
+                # A space can still need decoration -- underline/strike, or a
+                # dotted link underline if it falls inside hyperlinked text
+                # (e.g. the space between two words of one link).
                 if (
                     char == " "
                     and cell.bg == "default"
                     and not cell.reverse
                     and not cell.underline
                     and not cell.strike
+                    and not cell.href
                 ):
                     continue
 
@@ -1322,6 +1332,19 @@ class TerminalWidget(QOpenGLWidget):
                 if blink_on or not cell.blink:
                     if cell.underline:
                         add_glyph(rx, ry, rw, ul_h, fg, su0, sv0, su1, sv1)
+                    elif cell.href:
+                        # Dotted underline: the always-visible affordance
+                        # that this text is a link (skipped when the app
+                        # already drew its own solid underline there). The
+                        # SOLID version on hover is a separate per-frame
+                        # overlay (_add_hover_link) precisely so hovering
+                        # never forces a full geometry rebuild on every
+                        # mouse move -- only content changes do that.
+                        dot_w = min(ul_h, rw * 0.22)
+                        add_glyph(rx + rw * 0.14, ry, dot_w, ul_h, fg,
+                                 su0, sv0, su1, sv1)
+                        add_glyph(rx + rw * 0.56, ry, dot_w, ul_h, fg,
+                                 su0, sv0, su1, sv1)
                     if cell.strike:
                         add_glyph(rx, ry + st_off, rw, st_h, fg, su0, sv0, su1, sv1)
 
@@ -1889,6 +1912,33 @@ class TerminalWidget(QOpenGLWidget):
         ce = ec if abs_line == el else self.term.width
         return (cs, ce) if cs < ce else None
 
+    def _add_hover_link(self, builder):
+        """Underline every cell sharing the currently-hovered OSC 8 target, so
+        a link spanning multiple cells (or wrapped onto more than one line)
+        highlights as one unit, like a browser does. Rebuilt fresh every
+        frame rather than folded into the cached screen geometry, since it
+        changes on every mouse move; skipped entirely when nothing's
+        hovered, which is the common case. Works while scrolled into
+        history too -- `visible_lines()` already accounts for that.
+        """
+        href = self._hover_href
+        if href is None:
+            return
+        su0, sv0, su1, sv1 = self.atlas.solid_uv()
+        width = self.term.width
+        colors_for = self._colors_for
+        for y, row in enumerate(self.term.visible_lines()):
+            if y >= self.term.height:
+                break
+            for x, cell in enumerate(row):
+                if x >= width:
+                    break
+                if cell.href != href:
+                    continue
+                fg, _bg = colors_for(cell)
+                rx, ry, rw, rh = self._rect(x, y)
+                builder.add(rx, ry, rw, rh * 0.08, fg, su0, sv0, su1, sv1)
+
     def _add_selection(self, builder):
         if self._ordered_selection() is None:
             return
@@ -1919,6 +1969,39 @@ class TerminalWidget(QOpenGLWidget):
         col = max(0, min(col, self.term.width))
         row = max(0, min(row, self.term.height - 1))
         return (self.term.visible_top() + row, col)
+
+    # ---- OSC 8 hyperlinks ----------------------------------------------
+
+    _LINK_SCHEMES = ("http", "https", "mailto", "ftp", "ftps", "file")
+
+    def _href_at(self, pos):
+        """The OSC 8 target under a widget position, or None."""
+        line, col = self._cell_at(pos)
+        row = self.term.line_at(line)
+        if row is None or not (0 <= col < len(row)):
+            return None
+        return row[col].href
+
+    def _update_hover(self, pos):
+        """Track which link (if any) the mouse sits over: a pointing-hand
+        cursor and an underline (drawn fresh each frame, not baked into the
+        cached screen geometry, since it changes on every mouse move)."""
+        href = self._href_at(pos)
+        if href != self._hover_href:
+            self._hover_href = href
+            self.setCursor(Qt.PointingHandCursor) if href else self.unsetCursor()
+            self._invalidate()
+
+    def _open_link(self, href):
+        """Ctrl+click on hyperlinked text opens it with the OS's normal
+        handler for that URL scheme via QDesktopServices -- never a shell, so
+        the URL text is never interpreted as a command. Restricted to a small
+        allowlist of schemes as a cheap defence against something unexpected
+        being registered for an exotic one."""
+        scheme = href.split(":", 1)[0].lower() if ":" in href else ""
+        if scheme not in self._LINK_SCHEMES:
+            return
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl(href))
 
     def _selected_text(self):
         sel = self._ordered_selection()
@@ -1992,6 +2075,10 @@ class TerminalWidget(QOpenGLWidget):
         if self._report_mouse(event, shift):
             return
         if event.button() == Qt.LeftButton:
+            # Always start a potential selection, even over linked text --
+            # mouseReleaseEvent tells a plain click (open the link) apart
+            # from a drag (finish a normal text selection) by whether the
+            # cell actually moved, so dragging to copy link text still works.
             self._selecting = True
             cell = self._cell_at(event.position())
             self.sel_anchor = cell
@@ -1999,12 +2086,20 @@ class TerminalWidget(QOpenGLWidget):
             self._invalidate()
 
     def mouseMoveEvent(self, event):
+        self._update_hover(event.position())  # never sent to the shell
         shift = bool(event.modifiers() & Qt.ShiftModifier)
         if self._report_mouse(event, shift):
             return
         if self._selecting:
             self.sel_focus = self._cell_at(event.position())
             self._invalidate()
+
+    def leaveEvent(self, event):
+        if self._hover_href is not None:
+            self._hover_href = None
+            self.unsetCursor()
+            self._invalidate()
+        super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event):
         shift = bool(event.modifiers() & Qt.ShiftModifier)
@@ -2013,6 +2108,14 @@ class TerminalWidget(QOpenGLWidget):
         if event.button() == Qt.LeftButton and self._selecting:
             self._selecting = False
             self.sel_focus = self._cell_at(event.position())
+            # A plain click -- press and release on the same cell, no drag
+            # in between -- opens hyperlinked text under it instead of
+            # leaving the zero-length "selection" a same-cell click would
+            # otherwise be. A drag still selects normally either way.
+            if self.sel_anchor == self.sel_focus:
+                href = self._href_at(event.position())
+                if href:
+                    self._open_link(href)
             self._invalidate()
 
     # ------------------------------------------------------------ Input

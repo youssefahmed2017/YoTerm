@@ -30,6 +30,10 @@ It ships with **JetBrains Mono** so it looks the same on every machine.
   (bold, dim, italic, underline, reverse, strike, conceal, and optional blink).
 - **Windows-Terminal-style tabs** on the native window frame, with a dropdown
   menu and an in-app settings dialog. OSC 0/2 set tab titles.
+- **Hyperlinks** (OSC 8) — linked text shows a dotted underline; click it to
+  open (drag still selects the text normally), hovering solidifies the
+  underline and shows a pointing-hand cursor. Opened via Qt's own URL handler,
+  never a shell, and restricted to a safe scheme allowlist.
 - **Human-editable settings** — a real Python file at `~/.yoterm_config.py`, which
   is exactly what the in-app settings dialog (Ctrl+,) writes.
 - **YoTerm's own OSC sequences** (the `YT` namespace) — true gradients and images,

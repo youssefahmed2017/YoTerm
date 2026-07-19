@@ -155,6 +155,7 @@ class Cell:
         "blink",
         "protected",
         "grad",
+        "href",
         "width",
     )
 
@@ -173,6 +174,7 @@ class Cell:
         blink=False,
         protected=False,
         grad=None,
+        href=None,
         width=1,
     ):
         self.char = char
@@ -192,6 +194,8 @@ class Cell:
         # YoTerm gradient run (ESC ] YT ; gradient), or None. Cells in one run
         # share the same object, so the renderer can span one ramp across them.
         self.grad = grad
+        # OSC 8 hyperlink target, or None.
+        self.href = href
         # 1 = normal, 2 = leading half of a wide glyph, 0 = trailing spacer.
         self.width = width
 
@@ -274,6 +278,11 @@ class Terminal:
         # YoTerm gradient (ESC ] YT ; gradient) applied to following glyphs, or
         # None. SGR 0 clears it, so it behaves like a rendition attribute.
         self.current_grad = None
+        # OSC 8 hyperlink target applied to following glyphs, or None. Unlike
+        # the SGR attributes above, this is NOT part of "graphic rendition" in
+        # any real terminal -- SGR 0 doesn't end a link, only another OSC 8
+        # with an empty URI does (or a full reset).
+        self.current_href = None
 
         # Saved cursor position (ESC 7 / ESC 8, ESC [ s / ESC [ u).
         # DECSC (ESC 7) stashes the whole drawing state; SCOSC (ESC [ s), the
@@ -701,6 +710,7 @@ class Terminal:
         self.single_shift = None
         self.backarrow_bs = False
         self.current_protected = False
+        self.current_href = None
         self.tab_stops = set(range(self.TAB_SIZE, self.width, self.TAB_SIZE))
         self.saved_cursor = None
         self.saved_pos = None
@@ -954,6 +964,7 @@ class Terminal:
         self.backarrow_bs = False  # DECBKM
         self.cursor.visible = True  # DECTCEM
         self.current_protected = False  # DECSCA
+        self.current_href = None  # OSC 8
         self.single_shift = None
         self.scroll_top, self.scroll_bottom = 0, self.height - 1
         self.saved_cursor = None
@@ -1104,8 +1115,9 @@ class Terminal:
 
     def parse_osc(self, body):
         """OSC payload, 'Ps ; Pt'. 0 sets icon name + window title, 2 sets the
-        title alone — both are what shells and SSH use to name a tab. 1 (icon
-        name only) and the rest (clipboard, palette, hyperlinks) are ignored.
+        title alone — both are what shells and SSH use to name a tab. 8 is the
+        standard hyperlink sequence (ESC ] 8 ; params ; URI ST). 1 (icon name
+        only) and the rest (clipboard, palette) are ignored.
 
         `YT` is YoTerm's own namespace (ESC ] YT ; ...): gradients, images, and
         a capability handshake. A non-YoTerm terminal ignores it entirely, so
@@ -1115,8 +1127,17 @@ class Terminal:
             return
         if code in ("0", "2"):
             self.title = text
+        elif code == "8":
+            self._parse_hyperlink(text)
         elif code == "YT":
             self._parse_yt(text)
+
+    def _parse_hyperlink(self, text):
+        """OSC 8: 'params ; URI'. An empty URI ends the current link -- the
+        params (e.g. 'id=xyz', for grouping a link that wraps across lines)
+        aren't acted on, just consumed so they don't leak into the URI."""
+        _params, _, uri = text.partition(";")
+        self.current_href = uri if uri else None
 
     def _parse_yt(self, payload):
         """Dispatch a YoTerm OSC: 'verb ; args...'."""
@@ -1750,6 +1771,7 @@ class Terminal:
             blink=self.current_blink,
             protected=self.current_protected,
             grad=self.current_grad,
+            href=self.current_href,
             width=width,
         )
 
