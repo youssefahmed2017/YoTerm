@@ -348,6 +348,18 @@ def _lerp(a, b, t):
     )
 
 
+# Shared by both shaders below that need a rounded-rect containment test:
+# the main glyph/background program (for clipping to a zone's shape) and the
+# zone program itself (for its own fill/border/shadow). One definition so the
+# two can't drift apart. Inigo Quilez's rounded-box SDF: negative inside,
+# positive outside, in the same units as p/b.
+_SD_ROUND_BOX_GLSL = """
+float sdRoundBox(vec2 p, vec2 b, float r) {
+    vec2 q = abs(p) - b + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+"""
+
 VERTEX_SHADER = """
 #version 330
 // One instance per quad: `in_corner` walks the shared unit quad, everything
@@ -360,25 +372,53 @@ in vec3 in_color;
 in vec2 in_uv0;
 in vec2 in_uv1;
 in float in_mode;
+
+// Only used when this draw call is clipped to a zone (see u_clip_round in the
+// fragment shader) -- a widget-size uniform is enough to recover each
+// fragment's absolute logical-px position from its NDC one.
+uniform vec2 u_win;
+
 out vec3 v_color;
 out vec2 v_uv;
 out float v_mode;
+out vec2 v_frag_px;
 void main() {
-    gl_Position = vec4(in_pos + in_corner * in_size, 0, 1);
+    vec2 ndc = in_pos + in_corner * in_size;
+    gl_Position = vec4(ndc, 0, 1);
     v_uv = mix(in_uv0, in_uv1, in_corner);
     v_color = in_color;
     v_mode = in_mode;
+    v_frag_px = (ndc * 0.5 + 0.5) * u_win;
 }
 """
 
-FRAGMENT_SHADER = """
+FRAGMENT_SHADER = (
+    """
 #version 330
 uniform sampler2D tex;
+
+// Rounded-clip test for a batch drawn inside a `clip:on` zone (Phase 4, see
+// docs/zones.md). u_clip_round is 0 for every ordinary draw call -- the
+// overwhelming majority -- so they pay only the branch, never the discard.
+// Rectangular clipping doesn't need this at all: it's a real glScissor.
+uniform float u_clip_round;
+uniform vec2 u_clip_center;
+uniform vec2 u_clip_half;
+uniform float u_clip_radius;
+
 in vec3 v_color;
 in vec2 v_uv;
 in float v_mode;
+in vec2 v_frag_px;
 out vec4 color;
+"""
+    + _SD_ROUND_BOX_GLSL
+    + """
 void main() {
+    if (u_clip_round > 0.5) {
+        float d = sdRoundBox(v_frag_px - u_clip_center, u_clip_half, u_clip_radius);
+        if (d > 0.0) discard;
+    }
     vec4 texel = texture(tex, v_uv);
     if (v_mode > 0.5) {
         color = texel;                   // color glyph (emoji): own RGBA
@@ -387,6 +427,7 @@ void main() {
     }
 }
 """
+)
 
 # A second, non-instanced program just for YoTerm gradient text. Each glyph is
 # a real four-corner quad whose corners carry their OWN colour, sampled from
@@ -520,7 +561,8 @@ void main() {
 }
 """
 
-ZONE_FRAGMENT_SHADER = """
+ZONE_FRAGMENT_SHADER = (
+    """
 #version 330
 uniform sampler2D ramp_tex;
 
@@ -537,14 +579,15 @@ flat in float v_opacity;
 out vec4 color;
 
 const vec4 SHADOW_COLOR = vec4(%(sr)s, %(sg)s, %(sb)s, %(sa)s);
-
-// Inigo Quilez's rounded-box SDF: negative inside, positive outside, in the
-// same units as p/b (here, logical px relative to the box centre).
-float sdRoundBox(vec2 p, vec2 b, float r) {
-    vec2 q = abs(p) - b + r;
-    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
-}
-
+"""
+    % {
+        "sr": ZONE_SHADOW_COLOR[0],
+        "sg": ZONE_SHADOW_COLOR[1],
+        "sb": ZONE_SHADOW_COLOR[2],
+        "sa": ZONE_SHADOW_COLOR[3],
+    }
+    + _SD_ROUND_BOX_GLSL
+    + """
 void main() {
     float r = min(v_radius, min(v_half.x, v_half.y));
     float d = sdRoundBox(v_local, v_half, r);
@@ -590,8 +633,9 @@ void main() {
     if (result.a <= 0.0) discard;
     color = result;
 }
-""" % {"ramp_h": ZONE_RAMP_H, "sr": ZONE_SHADOW_COLOR[0], "sg": ZONE_SHADOW_COLOR[1],
-       "sb": ZONE_SHADOW_COLOR[2], "sa": ZONE_SHADOW_COLOR[3]}
+"""
+    % {"ramp_h": ZONE_RAMP_H}
+)
 
 # 18 floats per zone instance: pos.xy, size.xy, color.rgba, radius,
 # border.rgba, border_width, angle, ramp_row, shadow, opacity.
@@ -651,6 +695,9 @@ class TerminalWidget(QOpenGLWidget):
         self._color_cache = {}  # (fg, bg, reverse, dim) -> (fg_rgb, bg_rgb)
         self._static_data = None  # cached screen geometry (everything but the caret)
         self._static_quads = 0
+        # Cells clipped to a `clip:on` zone (Phase 4): rebuilt alongside
+        # _static_data, drawn as their own scissored batches every frame.
+        self._clip_render_data = []
 
         # Text selection, stored as absolute (buffer_line, col) so it stays
         # pinned to content while scrolling. None = no selection.
@@ -669,6 +716,9 @@ class TerminalWidget(QOpenGLWidget):
             vertex_shader=VERTEX_SHADER, fragment_shader=FRAGMENT_SHADER
         )
         self.program["tex"] = 0
+        # Off by default; a clip-bucket draw call turns it on for just that
+        # call, so the ordinary (overwhelmingly common) draw never pays for it.
+        self.program["u_clip_round"] = 0.0
 
         self.texture = self.ctx.texture(
             (self.atlas.width, self.atlas.height), 4, self.atlas.image.tobytes()
@@ -690,6 +740,31 @@ class TerminalWidget(QOpenGLWidget):
                 # '/i' = advance once per instance rather than per vertex.
                 (
                     self.vbo,
+                    "2f 2f 3f 2f 2f 1f/i",
+                    "in_pos",
+                    "in_size",
+                    "in_color",
+                    "in_uv0",
+                    "in_uv1",
+                    "in_mode",
+                ),
+            ],
+        )
+
+        # A second instance buffer for clip-bucket draws (Phase 4, see
+        # docs/zones.md): cells inside a `clip:on` zone are built into their
+        # own small batch and rendered separately (scissored, and for a
+        # rounded zone also shader-discarded), so they can't share `self.vbo`
+        # with the main screen -- that buffer's contents must survive
+        # untouched into next frame for the "skip the upload if unchanged"
+        # optimisation above. Reused sequentially, one clip zone at a time.
+        self.clip_vbo = self.ctx.buffer(reserve=256_000)
+        self.clip_vao = self.ctx.vertex_array(
+            self.program,
+            [
+                (self.quad_vbo, "2f", "in_corner"),
+                (
+                    self.clip_vbo,
                     "2f 2f 3f 2f 2f 1f/i",
                     "in_pos",
                     "in_size",
@@ -851,11 +926,17 @@ class TerminalWidget(QOpenGLWidget):
         if rewrite:
             body = RectangleBuilder()
             glyphs = RectangleBuilder()
-            self._add_cells(body, glyphs)  # may rasterize new glyphs on demand
+            # may rasterize new glyphs on demand, and returns cells routed
+            # into a `clip:on` zone instead (Phase 4, see docs/zones.md)
+            clip_batches = self._add_cells(body, glyphs)
             self._add_selection(body)
             body.extend(glyphs)
             self._static_data = body.buffer()
             self._static_quads = body.count
+            self._clip_render_data = [
+                (buf.buffer(), buf.count, center, half, radius)
+                for buf, center, half, radius in clip_batches.values()
+            ]
             self._dirty = False
 
         cursor = RectangleBuilder()
@@ -875,6 +956,9 @@ class TerminalWidget(QOpenGLWidget):
         # they draw before the glyph batch. z>=1 goes on top, further down.
         self._render_zones(above=False)
 
+        self.program["u_win"] = (self.win_w, self.win_h)
+        self.program["u_clip_round"] = 0.0  # the default draw is never clipped
+
         total = self._static_quads + cursor.count
         if total:
             stride = RectangleBuilder.FLOATS_PER_QUAD * 4  # bytes per quad
@@ -889,6 +973,8 @@ class TerminalWidget(QOpenGLWidget):
             if cursor.count:
                 self.vbo.write(cursor.buffer(), offset=self._static_quads * stride)
             self.vao.render(moderngl.TRIANGLES, vertices=6, instances=total)
+
+        self._render_clip_batches(pw, ph, dpr)
 
         # Images sit over their (blank, reserved) cells; gradient text draws on
         # top of the instanced pass. Both are their own programs.
@@ -1072,18 +1158,68 @@ class TerminalWidget(QOpenGLWidget):
         ys = [1.0 - (r + 1) * sy for r in range(rows + 1)]
         return xs, ys, sx, sy
 
+    def _clip_zones_screen_rects(self):
+        """Active `clip:on` zones this frame, as (zone, row0, row1, col0, col1)
+        in SCREEN space (row1/col1 exclusive), clamped to the visible grid and
+        scroll-adjusted. See docs/zones.md Phase 4.
+
+        Only zone-to-cell clipping is in scope here: a zone's own quad
+        (`_render_zones`) is never itself clipped by another zone, and
+        gradient text / images aren't routed through this -- just the plain
+        background+glyph pass, which is the overwhelmingly common case.
+        """
+        term = self.term
+        if not term.zones:
+            return []
+        top_abs = term.first_line_no + len(term.scrollback) - term.scroll_offset
+        alt = term.alt_screen
+        out = []
+        for z in term.zones.values():
+            if not z.clip or z.alt != alt:
+                continue
+            row0 = max(0, z.top_line - top_abs)
+            row1 = min(term.height, z.top_line - top_abs + z.h)
+            col0 = max(0, z.x)
+            col1 = min(term.width, z.x + z.w)
+            if row1 <= row0 or col1 <= col0:
+                continue  # off-screen or degenerate
+            out.append((z, row0, row1, col0, col1))
+        return out
+
+    def _clip_rect_px(self, row0, row1, col0, col1):
+        """A screen cell-rect -> (center_px, half_px) in the same absolute,
+        bottom-up logical-px convention the glyph shader's v_frag_px uses."""
+        xs, ys, sx, sy = self._grid_tables()
+        left_ndc, right_ndc = xs[col0], xs[col1]
+        top_ndc = ys[row0] + sy       # top of the first included row
+        bottom_ndc = ys[row1 - 1]     # bottom of the last included row
+        left_px = (left_ndc * 0.5 + 0.5) * self.win_w
+        right_px = (right_ndc * 0.5 + 0.5) * self.win_w
+        top_px = (top_ndc * 0.5 + 0.5) * self.win_h
+        bottom_px = (bottom_ndc * 0.5 + 0.5) * self.win_h
+        center = ((left_px + right_px) * 0.5, (bottom_px + top_px) * 0.5)
+        half = ((right_px - left_px) * 0.5, (top_px - bottom_px) * 0.5)
+        return center, half
+
     def _add_cells(self, bg_builder, glyph_builder):
         """One pass over the grid emitting both background and glyph quads.
 
         Backgrounds must all sit behind all glyphs, so they go to separate
         builders that the caller concatenates in order — that keeps the draw
         order while resolving each cell's colours and geometry only once.
+
+        A cell whose (row, col) falls inside a `clip:on` zone is routed into
+        that zone's OWN pair of builders instead of the ones passed in, so it
+        can later be drawn as its own scissored batch (Phase 4, see
+        docs/zones.md) rather than the normal full-screen one. Returns
+        {zone_id: (RectangleBuilder, center_px, half_px, radius_px)} for the
+        zones that ended up with anything in them; empty when nothing clips.
         """
         su0, sv0, su1, sv1 = self.atlas.solid_uv()
         xs, ys, rw, rh = self._grid_tables()
         width = self.term.width
         colors_for, atlas_uv = self._colors_for, self.atlas.cell_uv
-        add_bg, add_glyph = bg_builder.add, glyph_builder.add
+        default_add_bg, default_add_glyph = bg_builder.add, glyph_builder.add
         ul_h, st_h, st_off = rh * 0.08, rh * 0.08, rh * 0.45
 
         # SGR 5 only animates if the user asked for it: blink is ancient and
@@ -1098,6 +1234,15 @@ class TerminalWidget(QOpenGLWidget):
         # here; the colours are filled in per frame in _build_grad_vertices.
         grad_glyphs, grad_bbox, grad_specs = [], {}, {}
         has_cycle = False
+
+        # Clip buckets: only allocated when something on screen actually
+        # clips, so the overwhelmingly common "no clip zones" case pays just
+        # one list-emptiness check per cell, not a lookup.
+        clip_zones = self._clip_zones_screen_rects()
+        clip_bg, clip_glyph = {}, {}
+        for z, *_rect in clip_zones:
+            clip_bg[z.id] = RectangleBuilder()
+            clip_glyph[z.id] = RectangleBuilder()
 
         for y, row in enumerate(self.term.visible_lines()):
             ry = ys[y]
@@ -1114,6 +1259,19 @@ class TerminalWidget(QOpenGLWidget):
                     and not cell.strike
                 ):
                     continue
+
+                if clip_zones:
+                    zid = None
+                    for z, row0, row1, col0, col1 in clip_zones:
+                        if row0 <= y < row1 and col0 <= x < col1:
+                            zid = z.id
+                            break
+                    if zid is not None:
+                        add_bg, add_glyph = clip_bg[zid].add, clip_glyph[zid].add
+                    else:
+                        add_bg, add_glyph = default_add_bg, default_add_glyph
+                else:
+                    add_bg, add_glyph = default_add_bg, default_add_glyph
 
                 fg, bg = colors_for(cell)
                 rx = xs[x]
@@ -1133,6 +1291,8 @@ class TerminalWidget(QOpenGLWidget):
                     gw = rw * 2 if cell.width == 2 else rw
                     if cell.grad is not None and not is_color:
                         # Route to the gradient batch and grow this run's bbox.
+                        # (Gradient text isn't clip-routed in Phase 4 -- it's
+                        # its own pass with no scissor support yet.)
                         gid = id(cell.grad)
                         grad_specs[gid] = cell.grad
                         x1, y1 = rx + gw, ry + rh
@@ -1170,6 +1330,57 @@ class TerminalWidget(QOpenGLWidget):
         self._grad_bbox = grad_bbox
         self._grad_specs = grad_specs
         self._has_cycle = has_cycle  # drives repaints while a gradient cycles
+
+        clip_batches = {}
+        for z, row0, row1, col0, col1 in clip_zones:
+            b, g = clip_bg[z.id], clip_glyph[z.id]
+            b.extend(g)
+            if b.count:
+                center, half = self._clip_rect_px(row0, row1, col0, col1)
+                clip_batches[z.id] = (b, center, half, z.radius)
+        return clip_batches
+
+    def _render_clip_batches(self, pw, ph, dpr):
+        """Draw each `clip:on` zone's cells as its own scissored (and, if the
+        zone is rounded, shader-discarded) batch. See docs/zones.md Phase 4.
+
+        Unlike the main screen buffer, these are re-uploaded every frame
+        rather than skipped-when-unchanged: giving each clip zone its own
+        persistent GPU-buffer slot would track the zones coming and going,
+        which isn't worth it at the "dozens of zones" scale this is for.
+        """
+        if not self._clip_render_data:
+            return
+        for arr, count, center, half, radius in self._clip_render_data:
+            need = len(arr) * 4  # floats -> bytes
+            if need > self.clip_vbo.size:
+                self.clip_vbo.orphan(need)
+            else:
+                self.clip_vbo.orphan()
+            self.clip_vbo.write(arr)
+
+            cx, cy = center
+            hx, hy = half
+            x0 = max(0, int(round((cx - hx) * dpr)))
+            y0 = max(0, int(round((cy - hy) * dpr)))
+            w0 = max(0, min(int(round(hx * 2 * dpr)), pw - x0))
+            h0 = max(0, min(int(round(hy * 2 * dpr)), ph - y0))
+            self.ctx.scissor = (x0, y0, w0, h0)
+
+            if radius > 0:
+                self.program["u_clip_round"] = 1.0
+                self.program["u_clip_center"] = center
+                self.program["u_clip_half"] = half
+                self.program["u_clip_radius"] = radius
+            else:
+                # A plain rectangle is already exact via glScissor alone --
+                # no need to pay for the discard test too.
+                self.program["u_clip_round"] = 0.0
+
+            self.clip_vao.render(moderngl.TRIANGLES, vertices=6, instances=count)
+
+        self.ctx.scissor = None
+        self.program["u_clip_round"] = 0.0
 
     def _build_grad_vertices(self):
         """Per-vertex colours for the collected gradient glyphs at the current

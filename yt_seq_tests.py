@@ -398,6 +398,35 @@ def demo_zone_shadows():
     pause(1.6)
 
 
+def demo_zone_clipping():
+    title("Zone clipping — clip:on cuts real terminal cells to the zone's shape")
+    note("a rect clip is pixel-identical to no clip (cells don't overflow their "
+         "own bounds) — the visible case is a ROUNDED clip")
+
+    for _ in range(6):
+        print()
+    pos = cursor_pos()
+    if pos is None:
+        print(f"  {ESC}[2m(no ESC[6n reply — skipping){ESC}[0m")
+        return
+    top = pos[0] - 1 - 6
+
+    # A block of plain SGR-background cells (not the zone's own fill) with a
+    # clip:on;radius zone laid over it: the corners get cut to the round shape.
+    for r in range(4):
+        out(f"{ESC}[{top + r + 1};3H" + f"{ESC}[46m" + (" " * 12) + f"{ESC}[0m")
+    out(zone(f"create;id:17;x:2;y:{top};w:12;h:4;clip:on;radius:22"))
+
+    # An identical control block, same fill, no clip zone at all — proves the
+    # rounded corner above is the clip's doing, not something about the fill.
+    for r in range(4):
+        out(f"{ESC}[{top + r + 1};22H" + f"{ESC}[46m" + (" " * 12) + f"{ESC}[0m")
+
+    print(f"  {ESC}[2m  ^ left: clipped (rounded corners cut into the fill) "
+          f"  right: unclipped control (sharp corners){ESC}[0m")
+    pause(2.2)
+
+
 # --------------------------------------------------------------- entry
 
 
@@ -423,6 +452,7 @@ def main():
     demo_zones()
     demo_zone_gradients()
     demo_zone_shadows()
+    demo_zone_clipping()
 
     print(f"\n{ESC}[1;32mDemo done.{ESC}[0m")
     return 0

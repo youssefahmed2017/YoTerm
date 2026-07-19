@@ -25,6 +25,11 @@ _DEFAULTS = {
     "angle": 0.0,
     "shadow": 0.0,
     "opacity": 1.0,
+    # Phase 4: cells whose row/col fall inside this zone are drawn as their
+    # own scissored (and, for a rounded zone, shader-discarded) batch instead
+    # of the normal full-screen one, so overflowing text is cut to the zone's
+    # shape. See docs/zones.md.
+    "clip": False,
 }
 
 
@@ -63,6 +68,10 @@ def _float(text, default=None):
         return default
 
 
+def _truthy(text):
+    return text.strip().lower() in ("on", "true", "1", "yes")
+
+
 def _color(text):
     """A colour field, where the literal 'none' clears it."""
     if text is None or text.strip().lower() in ("none", "off", ""):
@@ -92,6 +101,8 @@ def apply_style(zone, opts):
         zone.opacity = min(1.0, max(0.0, _float(opts["opacity"], zone.opacity)))
     if "shadow" in opts:
         zone.shadow = max(0.0, _float(opts["shadow"], zone.shadow))
+    if "clip" in opts:
+        zone.clip = _truthy(opts["clip"])
     if "angle" in opts:
         zone.angle = _float(opts["angle"], zone.angle)
     if "gradient" in opts:

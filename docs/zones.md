@@ -177,9 +177,29 @@ full-strength one — the same reasoning a UI compositor would use.
 Note: *background* blur — blurring what is behind a zone — needs an offscreen
 framebuffer and is a different cost class; it is not in scope here.
 
-**Phase 4 — Clipping.** Scissor for rectangular, shader-discard for rounded,
-including the glyph-batching split described above. Enables scroll views and
-cards that actually contain their contents.
+**Phase 4 — Clipping.** ✅ Done. A zone with `clip:on` cuts the terminal cells
+that fall inside its (row, col) span to its own shape — `glScissor` for a
+rectangular zone, plus a shader-discard rounded-box test (the same SDF as
+Phase 2/3) for a rounded one. Verified against *real* terminal content (SGR
+background cells, not the zone's own decorative quad): a filled block under a
+`clip:on;radius:N` zone has its corners visibly cut away, while an identical
+unclipped control block next to it stays a sharp rectangle.
+
+This is the glyph-batching split predicted above: `_add_cells` routes a cell
+into a per-zone bucket instead of the normal one when it falls inside a
+`clip:on` zone's span, and each non-empty bucket is drawn as its own instanced
+call (own scissor, own rounded-clip uniforms) through a second scratch VBO —
+so the main screen buffer's contents are never disturbed, preserving its
+"skip the GPU upload when nothing changed" property. The tradeoff: a clip
+bucket's bytes ARE re-uploaded every frame (no per-zone persistent slot), which
+is fine at "dozens of zones," not the design point for thousands.
+
+Two things this phase deliberately does **not** cover, to keep it to the glyph
+pass rather than a full scene graph: a zone's own quad (`_render_zones`) is
+never itself clipped by another zone (no parent/child nesting), and gradient
+text / images aren't routed through clip buckets — only plain background+glyph
+cells are. Both are addable later without a protocol change if they turn out
+to matter.
 
 **Phase 5 — Animation.** No new protocol; Phase 1's `update` already covers it.
 The work is ensuring a zone update invalidates only the zone instance buffer and
