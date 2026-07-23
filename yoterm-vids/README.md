@@ -27,7 +27,17 @@ Built milestone-by-milestone:
   Spacebar pauses with a ❚❚ indicator.
 - **M5 — Controls** ✅ pause/resume (space), restart (r), frame-step (.),
   quit (q/Esc). The engine has a pausable clock, restart, and single-frame step.
-- M6 — Seeking · M7 — Performance · M8 — Audio · … (next)
+- **M6 — Seeking** ✅ absolute / relative / percentage. `←`/`→` jump ±5s, digits
+  `0`–`9` jump to 0–90%. Frame-accurate (keyframe seek + decode-discard), and the
+  scheduler re-anchors so the timeline stays drift-free across a seek.
+- **Polish** ✅ a YouTube-style overlay in native YoTerm: a modern round pause
+  glyph, and a scrubber (grey track · red progress · round handle) with a time
+  readout that fades in on hover and auto-hides. Hovering the bar shows a
+  light-grey hover trail toward the cursor, a preview timestamp, **and a live
+  thumbnail of the frame** at that point (decoded off a second container, so it
+  never disturbs playback). Clicking the bar seeks there; a keyboard seek flashes
+  the timestamp + red line + handle even without a hover.
+- M7 — Performance · M8 — Audio · … (next)
 
 The engine (`decoder`/`scheduler`/`resize`/`player`) is sink-agnostic, which is
 why the same code drives both the CLI (`renderer.EscapeSink`) and YoTerm's native

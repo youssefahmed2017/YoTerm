@@ -150,8 +150,17 @@ class raw_input_mode:
         return False
 
 
-def _read_reply(timeout=0.4):
-    """Read one terminal reply. `raw_input_mode` must already be active."""
+def _read_reply(timeout=1.2):
+    """Read one terminal reply. `raw_input_mode` must already be active.
+
+    The timeout is deliberately generous: a GPU terminal like YoTerm answers a
+    query (DSR, DA, ...) from its render loop, so the reply's latency is bounded
+    by a frame -- and a frame can stretch to a few hundred ms while a video is
+    playing. A tight (0.4 s) timeout here is exactly what made yt_seq_tests skip
+    the zone demo ("no ESC[6n reply") whenever a video was on screen. The full
+    wait is only ever paid when no reply arrives (e.g. a terminal with no DSR
+    support, or piped stdin); when one is coming, we return the moment we see it.
+    """
     deadline = time.time() + timeout
     buf = ""
     while time.time() < deadline:
