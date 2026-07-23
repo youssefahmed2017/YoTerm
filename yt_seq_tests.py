@@ -264,6 +264,32 @@ def demo_images():
     pause(1.6)
 
 
+# --------------------------------------------------------------- video
+
+
+def demo_video():
+    title("Video (YT;vid) — decoded on a worker thread, streamed to the GPU")
+    # A short clip shipped with the yoterm-vids sub-project. YoTerm decodes it
+    # in the background and pushes frames straight into a placement — no
+    # per-frame encode or escape round-trip. Any other terminal ignores it.
+    cat = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "yoterm-vids", "cat.mp4"
+    )
+    if not os.path.exists(cat):
+        print(
+            f"  {ESC}[2m(yoterm-vids/cat.mp4 not found next to this script; "
+            f"skipping the video demo){ESC}[0m"
+        )
+        return
+
+    note("a real video playing in place — press SPACE to pause/resume it (a ❚❚ "
+         "indicator shows while paused). It keeps playing as the demo goes on.")
+    out(yt(f"vid;path:{cat};cols:48;rows:24;id:7;loop:on"))
+    # Hold so it's clearly playing; it only moves in YoTerm (a no-op elsewhere).
+    # Deliberately not stopped — it loops and keeps playing through the rest.
+    time.sleep(1.5 if FAST else 5.0)
+
+
 # --------------------------------------------------------------- zones
 
 
@@ -449,6 +475,7 @@ def main():
     demo_gradient_cycle()
     demo_gradient_reset()
     demo_images()
+    demo_video()
     demo_zones()
     demo_zone_gradients()
     demo_zone_shadows()

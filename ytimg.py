@@ -129,6 +129,7 @@ class ImagePlacement:
         "ih",
         "alt",
         "fit",
+        "rev",
     )
 
     def __init__(
@@ -144,3 +145,7 @@ class ImagePlacement:
         self.ih = ih
         self.alt = alt  # placed on the alternate screen?
         self.fit = fit  # 'contain' (letterbox) or 'fill' (stretch to the box)
+        # Bumped whenever `rgba` is swapped in place (a video frame updating its
+        # placement). The renderer re-uploads the texture when this changes, even
+        # though the placement object stays the same identity.
+        self.rev = 0

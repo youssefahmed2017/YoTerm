@@ -58,6 +58,10 @@ printf '\e]YT;gradient;33;31;cycle:on;speed:1.5\e\\animated\e]YT;gradient;off\e\
 # Real images, GPU-sampled (block, or inline inside a line of text)
 printf '\e]YT;img;path:cat.png;cols:20\e\\\n'
 printf 'icon \e]YT;img;path:logo.png;cols:2;inline:on\e\\ in a sentence\n'
+
+# Video, decoded on a worker thread and streamed straight to the GPU. Spacebar
+# pauses (a ❚❚ indicator shows over the frame); YT;vid;del stops it.
+printf '\e]YT;vid;path:movie.mp4;cols:60;rows:34;loop:on\e\\\n'
 ```
 
 Gradient options: any number of colour stops (`#rrggbb`, names, or SGR codes),
@@ -66,6 +70,11 @@ plain `ESC[0m`.
 
 Image options: `path:` or `data:` (base64), `cols`/`rows`, `w`/`h` (cells or
 `px`), `fit:contain|fill`, `inline:on`, and `id:` (for replace / `del`).
+
+Video options: `path:`, `cols`/`rows` (the box, defaults to half the screen),
+`loop:on`, and `id:` (for replace / `del`). Decoding, timing and resizing run on
+a worker thread ([`yoterm-vids`](yoterm-vids/)); frames are handed to the
+renderer directly — no per-frame encode or escape-sequence round-trip.
 
 Run the demo inside YoTerm to see them all:
 

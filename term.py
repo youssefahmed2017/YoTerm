@@ -1,5 +1,6 @@
 # YoTerm: A friendly, Terminal Emulator
 
+import re
 import time
 import unicodedata
 
@@ -7,6 +8,11 @@ from tools import char_width
 from ytseq import make_gradient
 from ytimg import load_image, fit_cells, ImagePlacement
 from ytzone import Zone, apply_style, geometry_from
+
+# A run of "ordinary" bytes inside an OSC payload — everything that isn't a C0
+# control (which is where OSC termination / abort decisions live). Used to
+# bulk-swallow long base64 image/video payloads instead of one char at a time.
+_OSC_RUN = re.compile(r"[^\x00-\x1f]+")
 
 # Categories that combine onto a preceding glyph rather than occupying a cell:
 # non-spacing (Mn), enclosing (Me), and spacing-combining (Mc) marks. Other
@@ -19,8 +25,10 @@ _MARK_CATEGORIES = ("Mn", "Me", "Mc")
 MAX_MARKS = 8
 
 # Cap on an OSC payload, so a sequence that never terminates can't buffer
-# output forever.
-MAX_OSC = 1024
+# output forever. Big enough to carry a base64 image/video frame through
+# `YT;img;data:` (a single 720p JPEG frame is tens of KB), small enough that a
+# runaway unterminated sequence still can't eat unbounded memory.
+MAX_OSC = 8 * 1024 * 1024
 
 # DEC Special Graphics (ESC ( 0). Old TUIs draw boxes by switching G0 to this
 # and sending plain ASCII, so 'q' is a horizontal line, 'x' a vertical one, and
@@ -318,6 +326,12 @@ class Terminal:
         self.images = []
         self.cell_px = (8, 16)
         self._next_img_id = 1
+
+        # YT;vid requests the app hasn't picked up yet. The model can't decode or
+        # spawn threads, so it just reserves a placement (an image slot) and
+        # records the request; the app drains this, starts a decoder thread, and
+        # streams frames back into that placement. See _yt_video.
+        self.video_requests = []
 
         # Zones (YT;zone): styled rectangles, keyed by the caller's id so an
         # `update` is a cheap patch. Their ids are a separate namespace from
@@ -688,6 +702,7 @@ class Terminal:
         self.scrollback.clear()
         self.first_line_no = 0
         self.images = []
+        self.video_requests = []
         self.zones = {}
         self.scroll_offset = 0
         self.scroll_top, self.scroll_bottom = 0, self.height - 1
@@ -1144,11 +1159,13 @@ class Terminal:
         verb, _, rest = payload.partition(";")
         verb = verb.strip().lower()
         if verb == "?":  # capability handshake
-            self.responses.append("\x1b]YT;version:1;feat:gradient\x1b\\")
+            self.responses.append("\x1b]YT;version:1;feat:gradient,img,vid\x1b\\")
         elif verb in ("gradient", "grad"):
             self._yt_gradient(rest)
         elif verb == "img":
             self._yt_image(rest)
+        elif verb == "vid":
+            self._yt_video(rest)
         elif verb == "zone":
             self._yt_zone(rest)
 
@@ -1304,6 +1321,78 @@ class Terminal:
             self.cursor.x = 0
             for _ in range(rows):
                 self.index()
+
+    def _yt_video(self, rest):
+        """YT;vid — play a video in-place. The model can't decode, so it reserves
+        a placement (like an image) and hands the path to the app via
+        video_requests; the app decodes on a worker thread and streams frames
+        back into this placement. `del` (optionally id:N) stops/removes a video.
+
+            YT;vid ;path:<file> [;cols:C ;rows:R ;id:N ;loop:on]
+            YT;vid ;del [;id:N]
+        """
+        fields = [f.strip() for f in rest.split(";") if f.strip()]
+        opts, action = {}, None
+        for f in fields:
+            if ":" in f:
+                key, _, value = f.partition(":")
+                opts[key.strip().lower()] = value.strip()
+            else:
+                action = f.lower()
+
+        if action == "del":
+            wanted = opts.get("id", "")
+            if wanted.isdigit():
+                self.images = [im for im in self.images if im.id != int(wanted)]
+            else:
+                self.images = [im for im in self.images if im.alt != self.alt_screen]
+            return
+
+        path = opts.get("path")
+        if not path:
+            return
+
+        def _dim(value, default):
+            try:
+                return max(1, int(float(value)))
+            except (TypeError, ValueError):
+                return default
+
+        cols = min(_dim(opts.get("cols"), max(1, self.width // 2)), self.width)
+        rows = min(_dim(opts.get("rows"), max(1, self.height // 2)),
+                   max(1, self.height))
+
+        if opts.get("id", "").isdigit():  # a named video replaces its previous self
+            img_id = int(opts["id"])
+            self.images = [im for im in self.images if im.id != img_id]
+        else:
+            img_id, self._next_img_id = self._next_img_id, self._next_img_id + 1
+
+        # A 1x1 transparent placeholder until the first decoded frame lands; the
+        # app then swaps in real pixels (and dimensions) frame by frame.
+        top_line = self.first_line_no + len(self.scrollback) + self.cursor.y
+        self.images.append(
+            ImagePlacement(
+                img_id, top_line, self.cursor.x, cols, rows,
+                b"\x00\x00\x00\x00", 1, 1, self.alt_screen, "contain",
+            )
+        )
+        # Reserve the rows, exactly like a block image.
+        self.cursor.x = 0
+        for _ in range(rows):
+            self.index()
+
+        loop = opts.get("loop", "").lower() in ("on", "true", "1", "yes")
+        self.video_requests.append(
+            {
+                "id": img_id,
+                "path": path,
+                "cols": cols,
+                "rows": rows,
+                "loop": loop,
+                "alt": self.alt_screen,
+            }
+        )
 
     def parse_escape(self, seq):
         """Dispatch a CSI sequence. `seq` includes the leading '[' and the
@@ -1776,8 +1865,33 @@ class Terminal:
         )
 
     def write(self, data, end: str = "\n"):
-        for char in data:
-            self.put_char(char)
+        self._feed(data)
+        self._feed(end)
 
-        for char in end:
-            self.put_char(char)
+    def _feed(self, data):
+        """Consume a run of input. Ordinary characters go through put_char one by
+        one (each may place a glyph); but while an OSC payload is accumulating,
+        the long run of non-control bytes — a base64 image or video frame — is
+        swallowed in a single slice. Feeding those char-by-char is O(n) Python
+        calls on the UI thread and is what made large `YT;img` frames hang it."""
+        i = 0
+        n = len(data)
+        while i < n:
+            # Only bulk-consume when mid-OSC AND not sitting on a pending ESC:
+            # the ST terminator is `ESC \`, and `\` isn't a control byte, so a
+            # buffer ending in ESC must fall through to consume_escape or the
+            # fast-path would swallow the `\` and the OSC would never terminate.
+            if (
+                self.escape
+                and self.escape_buffer[:1] == "]"
+                and not self.escape_buffer.endswith("\x1b")
+            ):
+                m = _OSC_RUN.match(data, i)
+                if m is not None:
+                    self.escape_buffer += m.group()
+                    if len(self.escape_buffer) > MAX_OSC:  # runaway: give up
+                        self._end_escape()
+                    i = m.end()
+                    continue
+            self.put_char(data[i])
+            i += 1

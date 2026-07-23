@@ -642,6 +642,69 @@ void main() {
 _ZONE_FLOATS = 18
 
 
+class _VideoController(QtCore.QObject):
+    """Drives one YT;vid: decodes on a worker thread (the yoterm_vids engine)
+    and hands each decoded frame to the widget on the GUI thread via a queued
+    signal, so all GL/model touching stays on the main thread.
+
+    Pause/resume/stop are called from the GUI thread; the pausable clock in the
+    engine means paused time never bleeds into frame timing.
+    """
+
+    # img_id, rgba bytes, width, height  (queued to the GUI thread)
+    frameReady = QtCore.Signal(int, object, int, int)
+    finished = QtCore.Signal(int)
+
+    def __init__(self, img_id, path, box, loop, parent=None):
+        super().__init__(parent)
+        self.img_id = img_id
+        self._ok = False
+        try:
+            from yoterm_vids.player import Player
+            from yoterm_vids.renderer import CallbackSink
+        except Exception as exc:  # package / PyAV not installed
+            print(f"YT;vid: video engine unavailable ({exc})", file=sys.stderr)
+            self.player = None
+            return
+        sink = CallbackSink(on_show=self._on_show)
+        self.player = Player(path, sink, box, mode="contain", quality="fast",
+                             loop=loop)
+        self._ok = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self):
+        if self._ok:
+            self._thread.start()
+        else:
+            self.finished.emit(self.img_id)
+
+    def _run(self):
+        try:
+            self.player.play()
+        except Exception as exc:
+            print(f"YT;vid: playback error ({exc})", file=sys.stderr)
+        finally:
+            self.finished.emit(self.img_id)
+
+    def _on_show(self, image, pts):
+        # Worker thread: convert to RGBA bytes and post to the GUI thread.
+        rgba = image.tobytes("raw", "RGBA") if image.mode == "RGBA" \
+            else image.convert("RGBA").tobytes()
+        self.frameReady.emit(self.img_id, rgba, image.width, image.height)
+
+    @property
+    def paused(self):
+        return bool(self.player and self.player.paused)
+
+    def toggle(self):
+        if self.player:
+            self.player.toggle()
+
+    def stop(self):
+        if self.player:
+            self.player.stop()
+
+
 class TerminalWidget(QOpenGLWidget):
     """A GL-rendered terminal surface driving a live shell over a PTY."""
 
@@ -681,11 +744,20 @@ class TerminalWidget(QOpenGLWidget):
         self._grad_bbox = {}  # grad_id -> [minx, miny, maxx, maxy] in NDC
         self._grad_specs = {}  # grad_id -> GradientRun
         self._has_cycle = False  # is any animated gradient on screen?
-        # YoTerm images (ESC ] YT ; img). One GPU texture per placement, cached
-        # by the placement's identity and released when it's gone.
-        self._img_textures = {}  # id(placement) -> moderngl.Texture
+        # YoTerm images (ESC ] YT ; img). One GPU texture per placement. Keyed by
+        # id(placement) but the *object* is stored alongside the texture: a
+        # replacement frame (video via YT;img;id:N) frees the old placement, and
+        # CPython readily reuses its address for the new one, so a bare id() key
+        # would hand back the previous frame's texture. Holding the reference
+        # keeps the id live (no reuse) and lets us verify identity on lookup.
+        self._img_textures = {}  # id(placement) -> (placement, moderngl.Texture)
         self._atlas_cursor = 0  # our position in the shared atlas's log
         self.out_queue = queue.Queue()
+
+        # Native video playback (ESC ] YT ; vid). The model reserves an image
+        # placement and posts a request; we run a decoder thread per video and
+        # stream frames into that placement. img_id -> _VideoController.
+        self._videos = {}
 
         # Damage tracking. Rebuilding the whole screen's geometry costs more
         # than a frame budget on a big window, so only do it when something
@@ -987,6 +1059,7 @@ class TerminalWidget(QOpenGLWidget):
         # Images sit over their (blank, reserved) cells; gradient text draws on
         # top of the instanced pass. Both are their own programs.
         self._render_images()
+        self._render_video_overlay()  # pause indicator, on top of the frame
         self._render_gradients()
         self._render_zones(above=True)  # overlays: modals, tooltips, menus
 
@@ -1019,8 +1092,11 @@ class TerminalWidget(QOpenGLWidget):
             self.term.write(data, end="")
             self._dirty = True
 
+        self._service_videos()
+
         if self._shell_exited:
             self._timer.stop()
+            self._stop_all_videos()
             self.exited.emit()  # the window closes the tab, not itself
             return
 
@@ -1651,7 +1727,7 @@ class TerminalWidget(QOpenGLWidget):
         live = {id(im) for im in term.images}
         for key in list(self._img_textures):
             if key not in live:
-                self._img_textures.pop(key).release()
+                self._img_textures.pop(key)[1].release()
 
         drawable = [im for im in term.images if im.alt == term.alt_screen]
         if not drawable:
@@ -1667,12 +1743,21 @@ class TerminalWidget(QOpenGLWidget):
             if row_top + im.rows <= 0 or row_top >= term.height:
                 continue  # scrolled fully out of view
 
-            tex = self._img_textures.get(id(im))
-            if tex is None:
+            entry = self._img_textures.get(id(im))
+            if entry is None or entry[0] is not im or entry[2] != im.rev:
+                # Upload fresh pixels when this is a new placement (identity
+                # check guards against a replacement frame reusing a freed id())
+                # OR when a video frame swapped this placement's pixels in place
+                # (rev bumped, same object). The texture is also re-created, not
+                # just re-written, so a size change between frames is handled.
+                if entry is not None:
+                    entry[1].release()
                 tex = self.ctx.texture((im.iw, im.ih), 4, im.rgba)
                 tex.build_mipmaps()
                 tex.anisotropy = self.ctx.max_anisotropy
-                self._img_textures[id(im)] = tex
+                self._img_textures[id(im)] = (im, tex, im.rev)
+            else:
+                tex = entry[1]
 
             box_l = im.left * sx - 1.0
             box_r = (im.left + im.cols) * sx - 1.0
@@ -1719,6 +1804,109 @@ class TerminalWidget(QOpenGLWidget):
             self.img_vbo.orphan()
             self.img_vbo.write(quad)
             self.img_vao.render(moderngl.TRIANGLES, vertices=6)
+
+    # ------------------------------------------------------------ Native video
+
+    def _service_videos(self):
+        """Start newly-requested YT;vid videos and stop ones whose placement is
+        gone (del, screen clear, scrolled out of history, RIS). Called each tick."""
+        term = self.term
+        if term is None:
+            return
+        if term.video_requests:
+            requests, term.video_requests = term.video_requests, []
+            for req in requests:
+                self._start_video(req)
+        if self._videos:
+            live = {im.id for im in term.images}
+            for vid in list(self._videos):
+                if vid not in live:
+                    self._videos[vid].stop()  # finished handler cleans up
+
+    def _start_video(self, req):
+        vid = req["id"]
+        if vid in self._videos:  # a replacing YT;vid with the same id
+            self._videos.pop(vid).stop()
+        box = (max(1, req["cols"] * self.cell_w),
+               max(1, req["rows"] * self.cell_h))
+        ctrl = _VideoController(vid, req["path"], box, req["loop"], parent=self)
+        ctrl.frameReady.connect(self._on_video_frame, Qt.QueuedConnection)
+        ctrl.finished.connect(self._on_video_finished, Qt.QueuedConnection)
+        self._videos[vid] = ctrl
+        ctrl.start()
+
+    @QtCore.Slot(int, object, int, int)
+    def _on_video_frame(self, img_id, rgba, w, h):
+        """A decoded frame arrived (GUI thread): swap it into the placement's
+        pixels in place and repaint. rev bumps so the texture cache re-uploads."""
+        for im in self.term.images:
+            if im.id == img_id:
+                im.rgba = rgba
+                im.iw = w
+                im.ih = h
+                im.rev += 1
+                self.update()
+                return
+
+    @QtCore.Slot(int)
+    def _on_video_finished(self, img_id):
+        ctrl = self._videos.pop(img_id, None)
+        if ctrl is not None:
+            ctrl.deleteLater()
+        self.update()  # take down the pause indicator if it was showing
+
+    def _stop_all_videos(self):
+        for ctrl in list(self._videos.values()):
+            ctrl.stop()
+
+    def _render_video_overlay(self):
+        """Draw a pause indicator over any paused video, on top of its frame.
+        Two bars (❚❚) — the instanced pipeline draws axis-aligned quads, so a
+        chip of rectangles is native and crisp."""
+        paused = [v for v, c in self._videos.items() if c.paused]
+        if not paused:
+            return
+        term = self.term
+        by_id = {im.id: im for im in term.images if im.alt == term.alt_screen}
+        top_abs = term.first_line_no + len(term.scrollback) - term.scroll_offset
+        sx = self.cell_w / self.win_w * 2.0
+        sy = self.cell_h / self.win_h * 2.0
+        su0, sv0, su1, sv1 = self.atlas.solid_uv()
+        dark, light = (0.07, 0.07, 0.09), (0.93, 0.93, 0.95)
+
+        builder = RectangleBuilder()
+        for vid in paused:
+            im = by_id.get(vid)
+            if im is None:
+                continue
+            row_top = im.top_line - top_abs
+            box_l = im.left * sx - 1.0
+            box_r = (im.left + im.cols) * sx - 1.0
+            box_t = 1.0 - row_top * sy
+            box_b = 1.0 - (row_top + im.rows) * sy
+            cx, cy = (box_l + box_r) / 2.0, (box_b + box_t) / 2.0
+            chip = min(box_r - box_l, box_t - box_b) * 0.22
+            half = chip / 2.0
+            builder.add(cx - half, cy - half, chip, chip, color=dark,
+                        u0=su0, v0=sv0, u1=su1, v1=sv1)
+            bar_w, bar_h, gap = chip * 0.16, chip * 0.48, chip * 0.16
+            builder.add(cx - gap / 2.0 - bar_w, cy - bar_h / 2.0, bar_w, bar_h,
+                        color=light, u0=su0, v0=sv0, u1=su1, v1=sv1)
+            builder.add(cx + gap / 2.0, cy - bar_h / 2.0, bar_w, bar_h,
+                        color=light, u0=su0, v0=sv0, u1=su1, v1=sv1)
+        if not builder.count:
+            return
+
+        self.texture.use()  # solid_uv samples the atlas' opaque pixel
+        self.program["u_win"] = (self.win_w, self.win_h)
+        self.program["u_clip_round"] = 0.0
+        data = builder.buffer()
+        if len(data) > self.clip_vbo.size:
+            self.clip_vbo.orphan(len(data))
+        else:
+            self.clip_vbo.orphan()
+        self.clip_vbo.write(data)
+        self.clip_vao.render(moderngl.TRIANGLES, vertices=6, instances=builder.count)
 
     def _text_blink_on(self):
         half = TEXT_BLINK_PERIOD / 2.0
@@ -2157,6 +2345,15 @@ class TerminalWidget(QOpenGLWidget):
         mods = event.modifiers()
         ctrl = bool(mods & Qt.ControlModifier)
         shift = bool(mods & Qt.ShiftModifier)
+
+        # Space toggles pause/resume while a native video is playing, and is
+        # consumed rather than sent to the shell. Only when a video is active,
+        # so ordinary typing of spaces is untouched otherwise.
+        if key == Qt.Key_Space and not ctrl and self._videos:
+            for ctrl_obj in self._videos.values():
+                ctrl_obj.toggle()
+            self.update()
+            return
 
         # Clipboard (terminal convention: Ctrl+Shift+C/V).
         if ctrl and shift and key == Qt.Key_V:
