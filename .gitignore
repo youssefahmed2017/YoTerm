@@ -7,6 +7,11 @@ __pycache__/
 *.pyo
 *.pyi
 
+# Python packaging build artifacts (yoterm-vids)
+*.egg-info/
+build/
+dist/
+
 # Dear ImGui runtime state (written by the experimental app_glfw.py)
 imgui.ini
 

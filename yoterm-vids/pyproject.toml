@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yoterm-vids"
+version = "0.1.0"
+description = "Play videos inside YoTerm by streaming GPU-sampled YT;img frames"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "av>=12",
+    "numpy>=1.24",
+    "Pillow>=10",
+]
+
+[project.scripts]
+yoterm-vids = "yoterm_vids.cli:main"
+
+[tool.setuptools]
+packages = ["yoterm_vids"]
