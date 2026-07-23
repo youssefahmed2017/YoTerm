@@ -59,8 +59,9 @@ printf '\e]YT;gradient;33;31;cycle:on;speed:1.5\e\\animated\e]YT;gradient;off\e\
 printf '\e]YT;img;path:cat.png;cols:20\e\\\n'
 printf 'icon \e]YT;img;path:logo.png;cols:2;inline:on\e\\ in a sentence\n'
 
-# Video, decoded on a worker thread and streamed straight to the GPU. Spacebar
-# pauses (a ❚❚ indicator shows over the frame); YT;vid;del stops it.
+# Video, decoded on a worker thread and streamed straight to the GPU. While it
+# plays: space pauses/resumes (a ❚❚ indicator shows), r restarts, . steps one
+# frame (while paused), q/Esc quits. YT;vid;del also stops it.
 printf '\e]YT;vid;path:movie.mp4;cols:60;rows:34;loop:on\e\\\n'
 ```
 

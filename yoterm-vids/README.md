@@ -25,7 +25,9 @@ Built milestone-by-milestone:
   `YT;img` frames; **native `YT;vid`** in YoTerm imports this package, decodes on
   a worker thread, and feeds the renderer directly (no encode/base64 round-trip).
   Spacebar pauses with a ❚❚ indicator.
-- M5 — Controls · M6 — Seeking · M7 — Performance · M8 — Audio · … (next)
+- **M5 — Controls** ✅ pause/resume (space), restart (r), frame-step (.),
+  quit (q/Esc). The engine has a pausable clock, restart, and single-frame step.
+- M6 — Seeking · M7 — Performance · M8 — Audio · … (next)
 
 The engine (`decoder`/`scheduler`/`resize`/`player`) is sink-agnostic, which is
 why the same code drives both the CLI (`renderer.EscapeSink`) and YoTerm's native

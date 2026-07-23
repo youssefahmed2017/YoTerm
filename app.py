@@ -700,6 +700,22 @@ class _VideoController(QtCore.QObject):
         if self.player:
             self.player.toggle()
 
+    def restart(self):
+        if self.player:
+            self.player.restart()
+
+    def step(self):
+        if self.player:
+            self.player.step()
+
+    def seek_relative(self, delta):
+        if self.player:
+            self.player.seek_relative(delta)
+
+    def seek_percent(self, fraction):
+        if self.player:
+            self.player.seek_percent(fraction)
+
     def stop(self):
         if self.player:
             self.player.stop()
@@ -1859,6 +1875,41 @@ class TerminalWidget(QOpenGLWidget):
         for ctrl in list(self._videos.values()):
             ctrl.stop()
 
+    def _toggle_videos(self):
+        for ctrl in self._videos.values():
+            ctrl.toggle()
+        self.update()
+
+    def _restart_videos(self):
+        for ctrl in self._videos.values():
+            ctrl.restart()
+        self.update()
+
+    def _step_videos(self):
+        for ctrl in self._videos.values():
+            ctrl.step()
+        self.update()
+
+    def _seek_videos(self, delta):
+        for ctrl in self._videos.values():
+            ctrl.seek_relative(delta)
+        self.update()
+
+    def _seek_percent_videos(self, fraction):
+        for ctrl in self._videos.values():
+            ctrl.seek_percent(fraction)
+        self.update()
+
+    def _quit_videos(self):
+        """Stop playback and remove the placements, so the video vanishes (what
+        a viewer expects from 'quit', unlike pause which leaves the frame up)."""
+        ids = set(self._videos)
+        for ctrl in self._videos.values():
+            ctrl.stop()
+        if ids:
+            self.term.images = [im for im in self.term.images if im.id not in ids]
+        self.update()
+
     def _render_video_overlay(self):
         """Draw a pause indicator over any paused video, on top of its frame.
         Two bars (❚❚) — the instanced pipeline draws axis-aligned quads, so a
@@ -2346,14 +2397,34 @@ class TerminalWidget(QOpenGLWidget):
         ctrl = bool(mods & Qt.ControlModifier)
         shift = bool(mods & Qt.ShiftModifier)
 
-        # Space toggles pause/resume while a native video is playing, and is
-        # consumed rather than sent to the shell. Only when a video is active,
-        # so ordinary typing of spaces is untouched otherwise.
-        if key == Qt.Key_Space and not ctrl and self._videos:
-            for ctrl_obj in self._videos.values():
-                ctrl_obj.toggle()
-            self.update()
-            return
+        # Playback controls while a native video is on screen — consumed rather
+        # than sent to the shell. Gated on a video being active, so ordinary
+        # typing is untouched the rest of the time.
+        #   space  pause / resume        r   restart from the top
+        #   .      step one frame        q / Esc  quit (remove the video)
+        #   -> / <-  seek +/- 5s         0-9  seek to 0%..90%
+        if self._videos and not ctrl and not shift:
+            if key == Qt.Key_Space:
+                self._toggle_videos()
+                return
+            if key == Qt.Key_R:
+                self._restart_videos()
+                return
+            if key == Qt.Key_Period:
+                self._step_videos()
+                return
+            if key == Qt.Key_Right:
+                self._seek_videos(5.0)
+                return
+            if key == Qt.Key_Left:
+                self._seek_videos(-5.0)
+                return
+            if Qt.Key_0 <= key <= Qt.Key_9:
+                self._seek_percent_videos((key - Qt.Key_0) / 10.0)
+                return
+            if key in (Qt.Key_Q, Qt.Key_Escape):
+                self._quit_videos()
+                return
 
         # Clipboard (terminal convention: Ctrl+Shift+C/V).
         if ctrl and shift and key == Qt.Key_V:

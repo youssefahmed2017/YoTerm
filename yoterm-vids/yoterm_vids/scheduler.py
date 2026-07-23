@@ -77,6 +77,11 @@ class Clock:
     def paused(self):
         return self._paused_at is not None
 
+    def advance(self, dt):
+        """Jump playback time forward by `dt` seconds, paused or not. Used to
+        frame-step: nudge the clock so the next frame's deadline has arrived."""
+        self._start -= dt
+
     def reset(self):
         """Restart the clock from zero (used when playback loops/restarts)."""
         self._start = perf()
@@ -159,9 +164,12 @@ class Scheduler:
                 continue
             consecutive = 0
 
-            if now < frame.pts:
-                precise_sleep(frame.pts - now)
-                lateness = clock.now() - frame.pts
+            if now < target:
+                # Wait against `target` (frame.pts - pts0), NOT the absolute
+                # frame.pts: after a seek pts0 is non-zero, and sleeping to the
+                # absolute pts would stall for the whole seek offset.
+                precise_sleep(target - now)
+                lateness = clock.now() - target
 
             present(frame)
             stats.shown += 1

@@ -129,6 +129,7 @@ class Decoder:
         )
         self._time_base = self._stream.time_base or Fraction(1, 1000)
         self._fps = self.info.avg_fps or 25.0
+        self._seek_target = None  # set by seek(); frames() skips up to it
 
     def _pts_seconds(self, frame, index):
         """Frame presentation time in seconds, with sensible fallbacks.
@@ -143,16 +144,34 @@ class Decoder:
             return float(frame.pts * self._time_base)
         return index / self._fps
 
+    def seek(self, seconds):
+        """Reposition to `seconds`. The demuxer lands on the nearest keyframe at
+        or before the target; the next frames() then decode-discards up to the
+        exact target, so a seek is frame-accurate, not just keyframe-accurate."""
+        seconds = max(0.0, seconds)
+        if self.info.duration:
+            seconds = min(seconds, self.info.duration)
+        offset = int(seconds / self._time_base)
+        self._container.seek(offset, stream=self._stream, backward=True,
+                             any_frame=False)
+        self._seek_target = seconds
+
     def frames(self):
         """Yield Frame objects in presentation order until EOF.
 
         PyAV's `decode()` iterator flushes the decoder and terminates at
         end-of-file on its own, so EOF is simply the generator running out —
-        no sentinel to check for.
+        no sentinel to check for. After a seek(), frames whose pts precede the
+        target are decoded but withheld, so playback starts on the exact frame.
         """
         index = 0
+        skip_to = self._seek_target
+        self._seek_target = None
         for av_frame in self._container.decode(self._stream):
-            yield Frame(index, self._pts_seconds(av_frame, index), av_frame)
+            pts = self._pts_seconds(av_frame, index)
+            if skip_to is not None and pts + 1e-3 < skip_to:
+                continue  # keyframe -> target: decode-discard for accuracy
+            yield Frame(index, pts, av_frame)
             index += 1
         log.debug("decoded %d frames from %s", index, self.path)
 
