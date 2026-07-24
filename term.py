@@ -1383,6 +1383,8 @@ class Terminal:
             self.index()
 
         loop = opts.get("loop", "").lower() in ("on", "true", "1", "yes")
+        mute = opts.get("mute", "").lower() in ("on", "true", "1", "yes")
+        fs = opts.get("fullscreen", "").lower() in ("on", "true", "1", "yes")
         self.video_requests.append(
             {
                 "id": img_id,
@@ -1390,6 +1392,8 @@ class Terminal:
                 "cols": cols,
                 "rows": rows,
                 "loop": loop,
+                "mute": mute,
+                "fullscreen": fs,
                 "alt": self.alt_screen,
             }
         )

@@ -46,14 +46,12 @@ FONT_PX = 24  # on-screen glyph size (line-height feel)
 SUPERSAMPLE = 3  # render the atlas this much larger, then downsample
 GUTTER = 2  # transparent px between atlas cells (anti-bleed)
 
-BG_COLOR = (0.06, 0.06, 0.08)  # terminal background / clear color
-SELECTION_COLOR = (0.20, 0.30, 0.52)  # highlight behind selected cells
-DIM_FACTOR = 0.55  # brightness multiplier for SGR 2 (dim)
+# Appearance constants the *renderer* owns now live in renderer.py (BG_COLOR,
+# SELECTION_COLOR, DIM_FACTOR, CURSOR_COLOR, CURSOR_THICK_PX, _lerp). The cursor
+# *timing* below stays here: it drives the widget's blink scheduler (_tick).
 
 # Cursor. A caret reads as "real" when it keeps a constant weight regardless of
 # font size, stays solid while you're working, and only blinks once you pause.
-CURSOR_COLOR = (0.90, 0.92, 0.98)  # caret color when fully on
-CURSOR_THICK_PX = 2.0  # bar/underline weight in *logical* px
 CURSOR_BLINK_PERIOD = 1.2  # seconds for one on->off->on cycle
 CURSOR_BLINK_DELAY = 0.5  # stay solid this long after activity
 CURSOR_UNFOCUSED_ALPHA = 0.40  # dimmed caret when the window is inactive
@@ -343,16 +341,149 @@ def shared_atlas(font_px):
     return _SHARED_ATLAS
 
 
-def _lerp(a, b, t):
-    """Blend two RGB tuples."""
-    return (
-        a[0] + (b[0] - a[0]) * t,
-        a[1] + (b[1] - a[1]) * t,
-        a[2] + (b[2] - a[2]) * t,
-    )
-
-
 from renderer import Renderer
+
+
+class _PullDevice(QtCore.QIODevice):
+    """Feeds a QAudioSink in pull mode from its owner's PCM buffer.
+
+    QAudioSink calls readData() (on Qt's audio thread) whenever the device needs
+    more samples; we hand back what's buffered and pad any shortfall with silence
+    so the device never underruns and its played clock keeps ticking smoothly.
+    """
+
+    def __init__(self, sink):
+        super().__init__(sink)
+        self._sink = sink
+
+    def isSequential(self):
+        return True
+
+    def bytesAvailable(self):
+        # Report a floor of buffered data so QAudioSink keeps pulling steadily;
+        # readData pads with silence when the buffer is actually short.
+        with self._sink._lock:
+            return len(self._sink._buf) + self._sink._bytes_per_sec
+
+    def readData(self, maxlen):
+        s = self._sink
+        with s._lock:
+            take = min(int(maxlen), len(s._buf))
+            data = bytes(s._buf[:take])
+            del s._buf[:take]
+        if len(data) < maxlen:
+            data += b"\x00" * (int(maxlen) - len(data))  # silence on shortfall
+        return data
+
+    def writeData(self, data):
+        return 0
+
+
+class _QtAudioSink(QtCore.QObject):
+    """Engine ``audio.AudioSink`` backed by QtMultimedia's ``QAudioSink``.
+
+    The engine's feed thread only touches the byte buffer and a cached clock
+    (``open``/``write``/``flush``/``buffered_seconds``/``played_seconds`` — all
+    lock-guarded, thread-safe). The Qt device object is created, suspended and
+    stopped on the GUI thread (this QObject's thread); ``open``/``close`` marshal
+    there via queued signals. The master clock is ``processedUSecs()``, sampled
+    by a GUI-thread timer so the engine reads it without calling Qt off-thread.
+    """
+
+    _openSig = QtCore.Signal(int, int)
+    _closeSig = QtCore.Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._lock = threading.Lock()
+        self._buf = bytearray()
+        self._bytes_per_sec = 1
+        self._played_us = 0.0
+        self._muted = False
+        self._sink = None
+        self._io = None
+        self._timer = None
+        self._openSig.connect(self._open_gui, QtCore.Qt.QueuedConnection)
+        self._closeSig.connect(self._close_gui, QtCore.Qt.QueuedConnection)
+
+    # --- engine-thread API (buffer + cached clock only; no Qt calls) --------
+    def open(self, rate, channels):
+        with self._lock:
+            self._bytes_per_sec = max(1, int(rate) * int(channels) * 2)
+        self._openSig.emit(int(rate), int(channels))
+
+    def write(self, pcm):
+        with self._lock:
+            self._buf += pcm
+
+    def buffered_seconds(self):
+        with self._lock:
+            return len(self._buf) / self._bytes_per_sec
+
+    def played_seconds(self):
+        return self._played_us / 1_000_000.0
+
+    def flush(self):
+        with self._lock:
+            self._buf.clear()
+
+    def close(self):
+        self._closeSig.emit()
+
+    # --- transport (called on the GUI thread) -------------------------------
+    @property
+    def muted(self):
+        return self._muted
+
+    def set_muted(self, muted):
+        self._muted = bool(muted)
+        if self._sink is not None:
+            self._sink.setVolume(0.0 if self._muted else 1.0)
+
+    def pause(self):
+        if self._sink is not None:
+            self._sink.suspend()
+
+    def resume(self):
+        if self._sink is not None:
+            self._sink.resume()
+
+    # --- GUI-thread slots ---------------------------------------------------
+    @QtCore.Slot(int, int)
+    def _open_gui(self, rate, channels):
+        try:
+            from PySide6.QtMultimedia import QAudioFormat, QAudioSink
+            fmt = QAudioFormat()
+            fmt.setSampleRate(rate)
+            fmt.setChannelCount(channels)
+            fmt.setSampleFormat(QAudioFormat.SampleFormat.Int16)
+            self._sink = QAudioSink(fmt, self)
+            self._sink.setVolume(0.0 if self._muted else 1.0)
+            self._io = _PullDevice(self)
+            self._io.open(QtCore.QIODevice.ReadOnly)
+            self._sink.start(self._io)
+            self._timer = QtCore.QTimer(self)
+            self._timer.timeout.connect(self._sample_clock)
+            self._timer.start(8)  # ~125 Hz clock sampling; finer than a frame
+        except Exception as exc:  # no device / backend: play silent, don't crash
+            print(f"YT;vid: audio output unavailable ({exc})", file=sys.stderr)
+            self._sink = None
+
+    @QtCore.Slot()
+    def _sample_clock(self):
+        if self._sink is not None:
+            self._played_us = float(self._sink.processedUSecs())
+
+    @QtCore.Slot()
+    def _close_gui(self):
+        try:
+            if self._timer is not None:
+                self._timer.stop()
+            if self._sink is not None:
+                self._sink.stop()
+        except Exception:
+            pass
+        self._sink = self._io = self._timer = None
 
 
 class _VideoController(QtCore.QObject):
@@ -373,7 +504,7 @@ class _VideoController(QtCore.QObject):
 
     THUMB_W = 168  # scrub-preview thumbnail width in px (height by aspect)
 
-    def __init__(self, img_id, path, box, loop, parent=None):
+    def __init__(self, img_id, path, box, loop, mute=False, parent=None):
         super().__init__(parent)
         self.img_id = img_id
         self.path = path
@@ -395,10 +526,30 @@ class _VideoController(QtCore.QObject):
         # the GPU's texture format in one pass, so the frame path never touches
         # PIL (no full-res RGB buffer, no per-frame RGBA convert).
         sink = CallbackSink(on_show=self._on_show, pixel_format="rgba")
+        # Native audio output. Created regardless; the engine only opens the
+        # device if the file actually has an audio stream (so video-only clips
+        # never touch QtMultimedia).
+        self._audio = _QtAudioSink(parent=self)
+        self._audio.set_muted(mute)
         self.player = Player(path, sink, box, mode="contain", quality="fast",
-                             loop=loop)
+                             loop=loop, audio_sink=self._audio)
         self._ok = True
         self._thread = threading.Thread(target=self._run, daemon=True)
+
+    @property
+    def muted(self):
+        a = getattr(self, "_audio", None)
+        return a.muted if a is not None else False
+
+    def set_muted(self, muted):
+        a = getattr(self, "_audio", None)
+        if a is not None:
+            a.set_muted(muted)
+
+    def resize_box(self, box):
+        """Re-decode at a new pixel box (fullscreen enter/exit)."""
+        if self.player is not None:
+            self.player.resize(box)
 
     def start(self):
         if self._ok:
@@ -576,6 +727,9 @@ class TerminalWidget(QOpenGLWidget):
         # placement and posts a request; we run a decoder thread per video and
         # stream frames into that placement. img_id -> _VideoController.
         self._videos = {}
+        self._muted = False  # tab-wide audio mute (the `m` key); new videos inherit it
+        self._fullscreen_vid = None  # id of the video filling the whole terminal, or None
+        self._fs_saved_box = {}      # vid -> original (w_px, h_px) to restore on exit
         # YouTube-style playback overlay. It's drawn on top of the video frame
         # and is otherwise invisible, so playback stays clean until you interact.
         #   _video_boxes    vid -> (l, top, r, bottom) px, refreshed each paint
@@ -615,6 +769,14 @@ class TerminalWidget(QOpenGLWidget):
         # has mouse reporting on, since it never sends anything to the shell.
         self._hover_href = None
         self.setMouseTracking(True)
+
+    @property
+    def config(self):
+        """The live settings the renderer reads each frame. Resolved through the
+        module global so a settings change applies everywhere at once -- and
+        exposed on the widget (rather than imported) so renderer.py needn't
+        depend on app.py, which would be a circular import."""
+        return CONFIG
 
     # ------------------------------------------------------------ GL lifecycle
 
@@ -820,12 +982,16 @@ class TerminalWidget(QOpenGLWidget):
             self._videos.pop(vid).stop()
         box = (max(1, req["cols"] * self.cell_w),
                max(1, req["rows"] * self.cell_h))
-        ctrl = _VideoController(vid, req["path"], box, req["loop"], parent=self)
+        ctrl = _VideoController(vid, req["path"], box, req["loop"],
+                                mute=req.get("mute", False) or self._muted,
+                                parent=self)
         ctrl.frameReady.connect(self._on_video_frame, Qt.QueuedConnection)
         ctrl.finished.connect(self._on_video_finished, Qt.QueuedConnection)
         ctrl.thumbReady.connect(self._on_thumb, Qt.QueuedConnection)
         self._videos[vid] = ctrl
         ctrl.start()
+        if req.get("fullscreen") and self._fullscreen_vid is None:
+            self._toggle_fullscreen(vid)  # start filling the whole terminal
 
     @QtCore.Slot(int, float, object, int, int)
     def _on_thumb(self, vid, req_s, rgba, w, h):
@@ -856,6 +1022,9 @@ class TerminalWidget(QOpenGLWidget):
         ctrl = self._videos.pop(img_id, None)
         if ctrl is not None:
             ctrl.deleteLater()
+        if img_id == self._fullscreen_vid:  # its window is gone; leave fullscreen
+            self._fullscreen_vid = None
+        self._fs_saved_box.pop(img_id, None)
         self.update()  # take down the pause indicator if it was showing
 
     def _stop_all_videos(self):
@@ -865,6 +1034,45 @@ class TerminalWidget(QOpenGLWidget):
     def _toggle_videos(self):
         for ctrl in self._videos.values():
             ctrl.toggle()
+        self.update()
+
+    def _mute_videos(self):
+        """Toggle audio for every playing video (the `m` key). The state sticks
+        so videos started later inherit it, matching what you'd expect after
+        muting a tab."""
+        self._muted = not self._muted
+        for ctrl in self._videos.values():
+            ctrl.set_muted(self._muted)
+        self.update()
+
+    def _toggle_fullscreen(self, vid=None):
+        """Toggle a video filling the entire terminal (the `f` key). Entering
+        re-decodes at the viewport size for a crisp picture; exiting restores the
+        inline box. Only one video is fullscreen at a time."""
+        if self._fullscreen_vid is not None:  # exit
+            v = self._fullscreen_vid
+            self._fullscreen_vid = None
+            ctrl = self._videos.get(v)
+            box = self._fs_saved_box.pop(v, None)
+            if ctrl is not None and box is not None:
+                ctrl.resize_box(box)
+            self.update()
+            return
+        # enter: prefer the video under the cursor, else the only/first one
+        if vid is None or vid not in self._videos:
+            vid = self._video_hover if self._video_hover in self._videos else None
+        if vid is None:
+            vid = next(iter(self._videos), None)
+        ctrl = self._videos.get(vid) if vid is not None else None
+        if ctrl is None:
+            return
+        im = next((i for i in self.term.images if i.id == vid), None)
+        if im is not None:
+            self._fs_saved_box[vid] = (max(1, im.cols * self.cell_w),
+                                       max(1, im.rows * self.cell_h))
+        self._fullscreen_vid = vid
+        ctrl.resize_box((max(1, self.win_w), max(1, self.win_h)))
+        self._controls_until = time.monotonic() + 2.5
         self.update()
 
     def _restart_videos(self):
@@ -1341,9 +1549,16 @@ class TerminalWidget(QOpenGLWidget):
         #   space  pause / resume        r   restart from the top
         #   .      step one frame        q / Esc  quit (remove the video)
         #   -> / <-  seek +/- 5s         0-9  seek to 0%..90%
+        #   m      mute / unmute audio
         if self._videos and not ctrl and not shift:
             if key == Qt.Key_Space:
                 self._toggle_videos()
+                return
+            if key == Qt.Key_M:
+                self._mute_videos()
+                return
+            if key == Qt.Key_F:
+                self._toggle_fullscreen()
                 return
             if key == Qt.Key_R:
                 self._restart_videos()
@@ -1359,6 +1574,9 @@ class TerminalWidget(QOpenGLWidget):
                 return
             if Qt.Key_0 <= key <= Qt.Key_9:
                 self._seek_percent_videos((key - Qt.Key_0) / 10.0)
+                return
+            if key == Qt.Key_Escape and self._fullscreen_vid is not None:
+                self._toggle_fullscreen()  # Esc leaves fullscreen first
                 return
             if key in (Qt.Key_Q, Qt.Key_Escape):
                 self._quit_videos()

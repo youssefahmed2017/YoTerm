@@ -16,3 +16,5 @@ dist/
 imgui.ini
 
 labratory/
+# Local stress-test asset (BigBuckBunny), not shipped
+yoterm-vids/movie.mp4

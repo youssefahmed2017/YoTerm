@@ -102,6 +102,16 @@ def probe(path):
     return info
 
 
+def has_audio(path):
+    """True if `path` has at least one audio stream. Cheap: opens and closes
+    without decoding. Any open error is treated as 'no audio'."""
+    try:
+        with av.open(path) as container:
+            return any(s.type == "audio" for s in container.streams)
+    except Exception:
+        return False
+
+
 class Decoder:
     """Streams decoded video frames from a file.
 

@@ -19,19 +19,22 @@ from array import array
 
 from tools import RectangleBuilder, cell_rect_px, PALETTE
 
-# The hosting module. Imported for ``app.CONFIG`` only, read at call time -- the
-# app<->renderer import cycle is safe because app.py imports this module only
-# after it has defined the names below, and nothing here touches ``app`` at
-# import time.
-import app  # noqa: E402  (cyclic-but-safe; see above)
-from app import (
-    BG_COLOR,
-    SELECTION_COLOR,
-    DIM_FACTOR,
-    CURSOR_COLOR,
-    CURSOR_THICK_PX,
-    _lerp,
-)
+# Rendering appearance constants live here (the module that draws with them), so
+# renderer.py has no dependency on app.py -- app.py imports Renderer, and a back
+# dependency would be a circular import (fatal when app.py runs as __main__).
+# Live settings are read per-frame off the widget as ``self.w.config`` instead.
+BG_COLOR = (0.06, 0.06, 0.08)         # terminal background / clear color
+SELECTION_COLOR = (0.20, 0.30, 0.52)  # highlight behind selected cells
+DIM_FACTOR = 0.55                     # brightness multiplier for SGR 2 (dim)
+CURSOR_COLOR = (0.90, 0.92, 0.98)     # caret color when fully on
+CURSOR_THICK_PX = 2.0                 # bar/underline weight in *logical* px
+
+
+def _lerp(a, b, t):
+    """Blend two RGB tuples."""
+    return (a[0] + (b[0] - a[0]) * t,
+            a[1] + (b[1] - a[1]) * t,
+            a[2] + (b[2] - a[2]) * t)
 
 # Shared by both shaders below that need a rounded-rect containment test:
 # the main glyph/background program (for clipping to a zone's shape) and the
@@ -468,6 +471,7 @@ class Renderer:
         self._grad_glyphs = []
         self._grad_bbox = {}
         self._grad_specs = {}
+        self._atlas_pending = False  # a font resize asked to rebuild the texture
 
     def __getattr__(self, name):
         """Forward reads of widget/model/input state to the hosting widget.
@@ -493,6 +497,13 @@ class Renderer:
         # QOpenGLWidget renders into its OWN framebuffer, not FBO 0.
         self.ctx.detect_framebuffer(self.defaultFramebufferObject()).use()
         self.ctx.viewport = (0, 0, pw, ph)
+
+        # A pending font-resize rebuilds the atlas texture here, with the context
+        # current (see rebuild_atlas). Before _add_cells so fresh glyphs upload
+        # into the correctly-sized texture this same frame.
+        if self._atlas_pending:
+            self._rebuild_atlas_texture()
+            self._atlas_pending = False
 
         # DECSCNM inverts the screen, so the bare background flips too — a cell
         # with no background of its own must land on the inverted surface.
@@ -576,26 +587,30 @@ class Renderer:
         self._render_video_overlay()  # pause indicator, on top of the frame
         self._render_gradients()
         self._render_zones(above=True)  # overlays: modals, tooltips, menus
+        self._render_fullscreen_video()  # a video taking over the whole terminal
 
     # ------------------------------------------------------------ PTY I/O
 
 
     def rebuild_atlas(self):
-        """The atlas is a different size now, so the texture can't be reused."""
-        if self.ctx is None:
-            return
-        self.makeCurrent()
-        try:
-            if self.texture is not None:
-                self.texture.release()
-            self.texture = self.ctx.texture(
-                (self.atlas.width, self.atlas.height), 4, self.atlas.image.tobytes()
-            )
-            self.texture.build_mipmaps()
-            self.texture.anisotropy = self.ctx.max_anisotropy
-            self._atlas_cursor = len(self.atlas.written)
-        finally:
-            self.doneCurrent()
+        """The atlas changed size (a font resize), so the texture can't be
+        reused. Just flag it: the actual GL texture is (re)created at the top of
+        the next paint, where this widget's GL context is properly current --
+        creating it from a settings callback (via makeCurrent) left the glyphs
+        unsampled and the text invisible."""
+        self._atlas_pending = True
+
+    def _rebuild_atlas_texture(self):
+        """Re-create the atlas texture for the current (resized) atlas. Runs
+        inside paint(), context already current."""
+        if self.texture is not None:
+            self.texture.release()
+        self.texture = self.ctx.texture(
+            (self.atlas.width, self.atlas.height), 4, self.atlas.image.tobytes()
+        )
+        self.texture.build_mipmaps()
+        self.texture.anisotropy = self.ctx.max_anisotropy
+        self._atlas_cursor = len(self.atlas.written)
 
     # ------------------------------------------------------------ Damage
 
@@ -724,7 +739,7 @@ class Renderer:
         # SGR 5 only animates if the user asked for it: blink is ancient and
         # most terminals render it steadily. Off, it also costs nothing — no
         # blinking cells means no repaints to drive them.
-        blink_enabled = app.CONFIG.text_blink
+        blink_enabled = self.w.config.text_blink
         blink_on = (not blink_enabled) or self._text_blink_on()
         has_blink = False
 
@@ -1188,6 +1203,9 @@ class Renderer:
             else:
                 tex = entry[1]
 
+            if im.id == self.w._fullscreen_vid:
+                continue  # drawn by _render_fullscreen_video, not in its cell box
+
             box_l = im.left * sx - 1.0
             box_r = (im.left + im.cols) * sx - 1.0
             box_t = 1.0 - row_top * sy
@@ -1344,10 +1362,56 @@ class Renderer:
         controls_on = now < self._controls_until
         flash_on = now < self._seek_flash_until
         for vid, l, t, r, b in boxes:
+            if vid == self.w._fullscreen_vid:
+                continue  # its overlay is drawn by _render_fullscreen_video
             ctrl = self._videos.get(vid)
             if ctrl is not None:
                 self._render_one_overlay(vid, ctrl, l, t, r, b,
                                          controls_on, flash_on)
+
+    def _render_fullscreen_video(self):
+        """Draw the fullscreen video over everything: opaque black across the
+        whole terminal, the frame aspect-fit into it, then the scrubber overlay.
+        The frame is decoded at the viewport size (Player.resize) so it's crisp;
+        any not-yet-resized frame is just scaled up to fill in the meantime."""
+        vid = self.w._fullscreen_vid
+        if vid is None or vid not in self._videos:
+            return
+        im = next((i for i in self.term.images if i.id == vid), None)
+        entry = self._img_textures.get(id(im)) if im is not None else None
+        if im is None or entry is None or not im.iw or not im.ih:
+            return
+        tex = entry[1]
+        W, H = float(self.win_w), float(self.win_h)
+
+        # 1. Opaque black over the whole terminal (hides text + the inline video).
+        self.texture.use()
+        bg = RectangleBuilder()
+        self._overlay_quad(bg, 0.0, 0.0, W, H, (0.0, 0.0, 0.0))
+        self.program["u_win"] = (self.win_w, self.win_h)
+        self.program["u_clip_round"] = 0.0
+        self._clip_write(bg.buffer())
+        self.clip_vao.render(moderngl.TRIANGLES, vertices=6, instances=1)
+
+        # 2. The frame, aspect-fit (letterboxed) into the viewport and centred.
+        aspect = im.iw / im.ih
+        if W / H > aspect:      # viewport is wider: fit to height
+            fh, fw = H, H * aspect
+        else:                   # fit to width
+            fw, fh = W, W / aspect
+        x, y = (W - fw) * 0.5, (H - fh) * 0.5
+        self._overlay_thumb(tex, x, y, fw, fh)
+
+        # 3. The scrubber overlay on the video rect; expose the box for the mouse.
+        l, t, r, b = x, y, x + fw, y + fh
+        self.w._video_boxes[vid] = (l, t, r, b)
+        ctrl = self._videos.get(vid)
+        if ctrl is not None:
+            self.texture.use()
+            now = time.monotonic()
+            self._render_one_overlay(vid, ctrl, l, t, r, b,
+                                     now < self._controls_until,
+                                     now < self._seek_flash_until)
 
     def _render_one_overlay(self, vid, ctrl, l, t, r, b, controls_on, flash_on):
         w, h = r - l, b - t
@@ -1463,7 +1527,7 @@ class Renderer:
 
 
     def _add_cursor(self, builder):
-        if not app.CONFIG.cursor:
+        if not self.w.config.cursor:
             return  # the user turned the caret off entirely
         cur = self.term.cursor
         if not cur.visible or self.term.scroll_offset != 0:

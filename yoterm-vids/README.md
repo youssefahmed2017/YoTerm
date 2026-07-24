@@ -45,11 +45,25 @@ Built milestone-by-milestone:
   from swscale**, so a frame reaches the GPU with no PIL image and no per-frame
   convert; the CLI still gets an RGB PIL image to JPEG-encode. The GPU texture is
   reused (`write`) across frames rather than reallocated every frame.
-- M8 — Audio · … (next)
+- **M8 — Audio** ✅ native `YT;vid` plays sound locked to the picture.
+  **Audio is the master clock:** `audio.AudioDecoder` decodes + resamples the
+  audio off its own container, a feed thread keeps the device fed, and the video
+  scheduler paces to how much audio has actually played (`audio.AudioClock`) —
+  so a late frame is invisible and audio never glitches. Pause/seek/loop keep
+  A/V together. Output is a pluggable `AudioSink`; YoTerm supplies a QtMultimedia
+  (`QAudioSink`) one, so there's no new dependency. `m` mutes/unmutes and
+  `YT;vid;mute:True` starts muted. (The CLI stays silent for now — QAudioSink
+  needs a Qt event loop it doesn't run.)
+- **Fullscreen** ✅ `f` makes a `YT;vid` take over the entire terminal (`Esc`/`f`
+  exits, `YT;vid;fullscreen:True` starts fullscreen). The engine re-decodes at
+  the viewport size (`Player.resize`) so the picture is crisp, not an upscaled
+  thumbnail; the scrubber/overlay work fullscreen too.
+- M9 — Polish · M10 — Extras · … (next)
 
-The engine (`decoder`/`scheduler`/`resize`/`player`) is sink-agnostic, which is
-why the same code drives both the CLI (`renderer.EscapeSink`) and YoTerm's native
-player (a callback sink in `app.py`).
+The engine (`decoder`/`scheduler`/`resize`/`player`/`audio`) is sink-agnostic,
+which is why the same code drives both the CLI (`renderer.EscapeSink`) and
+YoTerm's native player (a callback frame sink + a QtMultimedia audio sink in
+`app.py`).
 
 ## Layout
 
