@@ -391,7 +391,10 @@ class _VideoController(QtCore.QObject):
             print(f"YT;vid: video engine unavailable ({exc})", file=sys.stderr)
             self.player = None
             return
-        sink = CallbackSink(on_show=self._on_show)
+        # Ask the engine for raw RGBA bytes: swscale converts+scales straight to
+        # the GPU's texture format in one pass, so the frame path never touches
+        # PIL (no full-res RGB buffer, no per-frame RGBA convert).
+        sink = CallbackSink(on_show=self._on_show, pixel_format="rgba")
         self.player = Player(path, sink, box, mode="contain", quality="fast",
                              loop=loop)
         self._ok = True
@@ -423,13 +426,13 @@ class _VideoController(QtCore.QObject):
         finally:
             self._safe_emit(lambda: self.finished.emit(self.img_id))
 
-    def _on_show(self, image, pts):
-        # Worker thread: convert to RGBA bytes and post to the GUI thread.
-        rgba = image.tobytes("raw", "RGBA") if image.mode == "RGBA" \
-            else image.convert("RGBA").tobytes()
+    def _on_show(self, frame, pts):
+        # Worker thread: `frame` is (rgba_bytes, w, h) straight from swscale
+        # (pixel_format="rgba"), already sized for the box -- post it to the GUI
+        # thread with no conversion.
+        rgba, w, h = frame
         self._safe_emit(
-            lambda: self.frameReady.emit(self.img_id, rgba,
-                                         image.width, image.height))
+            lambda: self.frameReady.emit(self.img_id, rgba, w, h))
 
     @property
     def paused(self):

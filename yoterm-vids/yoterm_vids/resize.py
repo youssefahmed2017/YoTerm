@@ -11,14 +11,16 @@ crops, matching the vocabulary YoTerm's own `YT;img;fit:` uses.
 """
 
 from PIL import Image
+from av.video.reformatter import Interpolation
 
-# Down-/up-sampling filters, cheapest → sharpest. Video downscaling looks fine
-# with BILINEAR and it's markedly faster than LANCZOS per frame; LANCZOS is
-# offered for stills / slow playback where sharpness wins.
+# Down-/up-sampling filters, cheapest → sharpest, mapped onto libswscale's own
+# scalers (see FrameProcessor.process): video downscaling looks fine with
+# BILINEAR and it's markedly cheaper than LANCZOS per frame; LANCZOS is offered
+# for stills / slow playback where sharpness wins.
 _FILTERS = {
-    "nearest": Image.NEAREST,
-    "fast": Image.BILINEAR,
-    "smooth": Image.LANCZOS,
+    "nearest": Interpolation.POINT,
+    "fast": Interpolation.BILINEAR,
+    "smooth": Interpolation.LANCZOS,
 }
 _MODES = ("contain", "fill", "cover")
 
@@ -42,31 +44,47 @@ def target_dims(iw, ih, box_w, box_h, mode):
 
 
 class FrameProcessor:
-    """Converts av frames to RGB PIL images sized for a fixed pixel box."""
+    """Converts av frames to display-ready pixels sized for a fixed pixel box.
 
-    def __init__(self, box, mode="contain", quality="smooth"):
+    `out` picks the output form for the two display paths, so each gets exactly
+    the bytes it needs with no extra copy:
+      "rgb"  -> an RGB PIL.Image (the CLI's EscapeSink JPEG-encodes it).
+      "rgba" -> a ``(rgba_bytes, w, h)`` tuple straight from swscale, ready to
+                upload as a GPU texture -- YoTerm's native path, no PIL at all.
+    """
+
+    def __init__(self, box, mode="contain", quality="smooth", out="rgb"):
         if mode not in _MODES:
             raise ValueError(f"mode must be one of {_MODES}, got {mode!r}")
         self.box_w, self.box_h = int(box[0]), int(box[1])
         self.mode = mode
-        self.filter = _FILTERS.get(quality, Image.LANCZOS)
+        self.interp = _FILTERS.get(quality, Interpolation.LANCZOS)
+        self.out = out
+        self._fmt = "rgba" if out == "rgba" else "rgb24"
 
     def process(self, av_frame):
-        """Decoded frame → RGB PIL.Image sized for the box.
+        """Decoded frame → display-ready pixels (see `out`).
 
-        `to_ndarray(format="rgb24")` runs libswscale to do the YUV→RGB
-        conversion in C; the resize is Pillow so we get an explicit filter
-        choice. (Fusing both into one swscale call is a Milestone 7 optimisation.)
+        The pixel-format conversion *and* the scale-to-box happen in a single
+        libswscale pass (``av_frame.reformat``), rather than converting at full
+        source resolution and then resizing again in Pillow. That fuses two
+        passes into one and skips allocating a full-resolution buffer — for a
+        1280×720 source into a ~672-wide box it's several times less CPU per
+        frame, which is most of the per-frame cost. Downscaling on the GPU still
+        does the final sub-pixel sampling, so swscale's scaler is plenty here.
         """
-        arr = av_frame.to_ndarray(format="rgb24")
-        ih, iw = arr.shape[0], arr.shape[1]
-        img = Image.fromarray(arr, "RGB")
-
+        iw, ih = av_frame.width, av_frame.height
         w, h, crop = target_dims(iw, ih, self.box_w, self.box_h, self.mode)
         if (w, h) != (iw, ih):
-            img = img.resize((w, h), self.filter)
+            conv = av_frame.reformat(width=w, height=h, format=self._fmt,
+                                     interpolation=self.interp)
+        else:  # already the right size: convert only
+            conv = av_frame.reformat(format=self._fmt)
+        arr = conv.to_ndarray()  # (h, w, 3) for rgb24, (h, w, 4) for rgba
         if crop:  # cover: trim the overflow so we land exactly on the box
             left = (w - self.box_w) // 2
             top = (h - self.box_h) // 2
-            img = img.crop((left, top, left + self.box_w, top + self.box_h))
-        return img
+            arr = arr[top:top + self.box_h, left:left + self.box_w]
+        if self.out == "rgba":
+            return arr.tobytes(), arr.shape[1], arr.shape[0]
+        return Image.fromarray(arr, "RGB")

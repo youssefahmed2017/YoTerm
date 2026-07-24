@@ -1161,17 +1161,29 @@ class Renderer:
                 continue  # scrolled fully out of view
 
             entry = self._img_textures.get(id(im))
-            if entry is None or entry[0] is not im or entry[2] != im.rev:
-                # Upload fresh pixels when this is a new placement (identity
-                # check guards against a replacement frame reusing a freed id())
-                # OR when a video frame swapped this placement's pixels in place
-                # (rev bumped, same object). The texture is also re-created, not
-                # just re-written, so a size change between frames is handled.
+            if entry is None or entry[0] is not im:
+                # New placement (the identity check guards against a replacement
+                # frame reusing a freed id()): create the texture.
                 if entry is not None:
                     entry[1].release()
                 tex = self.ctx.texture((im.iw, im.ih), 4, im.rgba)
                 tex.build_mipmaps()
                 tex.anisotropy = self.ctx.max_anisotropy
+                self._img_textures[id(im)] = (im, tex, im.rev)
+            elif entry[2] != im.rev:
+                # Same placement, new pixels (a video frame swapped them in
+                # place, rev bumped). Reuse the GPU texture and upload in place
+                # when the size is unchanged -- which it always is frame to frame
+                # -- instead of freeing and reallocating a texture every frame.
+                tex = entry[1]
+                if tex.size == (im.iw, im.ih):
+                    tex.write(im.rgba)
+                    tex.build_mipmaps()
+                else:  # a resized frame: the old texture can't be reused
+                    tex.release()
+                    tex = self.ctx.texture((im.iw, im.ih), 4, im.rgba)
+                    tex.build_mipmaps()
+                    tex.anisotropy = self.ctx.max_anisotropy
                 self._img_textures[id(im)] = (im, tex, im.rev)
             else:
                 tex = entry[1]

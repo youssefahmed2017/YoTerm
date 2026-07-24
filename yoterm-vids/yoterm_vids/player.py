@@ -151,7 +151,10 @@ class Player:
         try:
             with Decoder(self.path) as dec:
                 self._duration = dec.info.duration or self._duration
-                proc = FrameProcessor(self.box, self.mode, self.quality)
+                # The sink picks the pixel form it wants (GPU wants raw RGBA,
+                # the CLI wants an RGB PIL image to JPEG-encode); default RGB.
+                out = getattr(self.sink, "pixel_format", "rgb")
+                proc = FrameProcessor(self.box, self.mode, self.quality, out=out)
                 sched = Scheduler(dec.info.avg_fps)
                 self._interval = sched.interval
 

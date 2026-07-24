@@ -41,14 +41,18 @@ class FrameSink:
 class CallbackSink(FrameSink):
     """Forward each frame to a plain callable — the native/in-process path.
 
-    `on_show(image, pts)` receives the RGB PIL image; the caller decides how to
-    get its pixels onto the screen. `on_open`/`on_close` are optional hooks.
+    `on_show(frame, pts)` receives whatever the requested `pixel_format` yields:
+    "rgb" (default) hands over an RGB PIL image; "rgba" hands over a
+    ``(rgba_bytes, w, h)`` tuple straight from swscale, which YoTerm's native
+    player uploads to a GPU texture with no PIL/convert step. `on_open`/
+    `on_close` are optional hooks.
     """
 
-    def __init__(self, on_show, on_open=None, on_close=None):
+    def __init__(self, on_show, on_open=None, on_close=None, pixel_format="rgb"):
         self._on_show = on_show
         self._on_open = on_open
         self._on_close = on_close
+        self.pixel_format = pixel_format
 
     def open(self, box):
         if self._on_open:

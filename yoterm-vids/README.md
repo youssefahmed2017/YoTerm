@@ -37,7 +37,15 @@ Built milestone-by-milestone:
   thumbnail of the frame** at that point (decoded off a second container, so it
   never disturbs playback). Clicking the bar seeks there; a keyboard seek flashes
   the timestamp + red line + handle even without a hover.
-- M7 — Performance · M8 — Audio · … (next)
+- **M7 — Performance** ✅ the per-frame path went from ~12 ms to ~1.3 ms (≈10×,
+  ~90% less CPU) on a 720p source. `resize.FrameProcessor` now fuses YUV→RGB and
+  the scale-to-box into a **single libswscale pass** instead of converting at
+  full resolution and resizing again in Pillow. A sink declares the pixel form
+  it wants (`pixel_format`): YoTerm's native path asks for **raw RGBA straight
+  from swscale**, so a frame reaches the GPU with no PIL image and no per-frame
+  convert; the CLI still gets an RGB PIL image to JPEG-encode. The GPU texture is
+  reused (`write`) across frames rather than reallocated every frame.
+- M8 — Audio · … (next)
 
 The engine (`decoder`/`scheduler`/`resize`/`player`) is sink-agnostic, which is
 why the same code drives both the CLI (`renderer.EscapeSink`) and YoTerm's native
