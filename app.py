@@ -403,19 +403,33 @@ class _VideoController(QtCore.QObject):
         else:
             self.finished.emit(self.img_id)
 
+    @staticmethod
+    def _safe_emit(emit):
+        """Fire a Qt signal from a worker thread, tolerating our C++ object
+        having been deleted during tab/app teardown: a daemon decode thread can
+        outlive the QObject and would otherwise crash with 'Signal source has
+        been deleted'. `emit` is a thunk so the signal *lookup* -- which also
+        raises on a dead object -- is inside the guard too."""
+        try:
+            emit()
+        except RuntimeError:
+            pass
+
     def _run(self):
         try:
             self.player.play()
         except Exception as exc:
             print(f"YT;vid: playback error ({exc})", file=sys.stderr)
         finally:
-            self.finished.emit(self.img_id)
+            self._safe_emit(lambda: self.finished.emit(self.img_id))
 
     def _on_show(self, image, pts):
         # Worker thread: convert to RGBA bytes and post to the GUI thread.
         rgba = image.tobytes("raw", "RGBA") if image.mode == "RGBA" \
             else image.convert("RGBA").tobytes()
-        self.frameReady.emit(self.img_id, rgba, image.width, image.height)
+        self._safe_emit(
+            lambda: self.frameReady.emit(self.img_id, rgba,
+                                         image.width, image.height))
 
     @property
     def paused(self):
@@ -510,8 +524,9 @@ class _VideoController(QtCore.QObject):
                     tw = self.THUMB_W
                     th = max(1, round(img.height * tw / img.width))
                     img = img.resize((tw, th), Image.BILINEAR)
-                    self.thumbReady.emit(self.img_id, req,
-                                         img.convert("RGBA").tobytes(), tw, th)
+                    rgba = img.convert("RGBA").tobytes()
+                    self._safe_emit(lambda: self.thumbReady.emit(
+                        self.img_id, req, rgba, tw, th))
                 except Exception:
                     continue
         finally:
