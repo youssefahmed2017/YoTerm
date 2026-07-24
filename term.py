@@ -6,7 +6,7 @@ import unicodedata
 
 from tools import char_width
 from ytseq import make_gradient
-from ytimg import load_image, fit_cells, ImagePlacement
+from ytimg import load_image, fit_cells, video_size, ImagePlacement
 from ytzone import Zone, apply_style, geometry_from
 
 # A run of "ordinary" bytes inside an OSC payload — everything that isn't a C0
@@ -1358,9 +1358,28 @@ class Terminal:
             except (TypeError, ValueError):
                 return default
 
-        cols = min(_dim(opts.get("cols"), max(1, self.width // 2)), self.width)
-        rows = min(_dim(opts.get("rows"), max(1, self.height // 2)),
-                   max(1, self.height))
+        max_cols = min(_dim(opts.get("cols"), max(1, self.width // 2)), self.width)
+        max_rows = min(_dim(opts.get("rows"), max(1, self.height // 2)),
+                       max(1, self.height))
+        # Aspect-fit the reserved box to the video's real size (probed cheaply
+        # from the file's metadata) so cols/rows act as a *bounding box*, like
+        # YT;img: a 16:9 clip in a 48x24 box reserves ~48x13, not 48x24 with big
+        # letterbox bands around the picture. Falls back to the raw box if the
+        # file can't be probed.
+        cw, ch = self.cell_px
+        size = video_size(path)
+        if size is not None and cw and ch:
+            iw, ih = size
+            aspect = iw / ih
+            box_w, box_h = max_cols * cw, max_rows * ch
+            if box_w / box_h > aspect:  # box wider than the video: fit to height
+                fit_h, fit_w = box_h, box_h * aspect
+            else:                       # fit to width
+                fit_w, fit_h = box_w, box_w / aspect
+            cols = max(1, min(max_cols, round(fit_w / cw)))
+            rows = max(1, min(max_rows, round(fit_h / ch)))
+        else:
+            cols, rows = max_cols, max_rows
 
         if opts.get("id", "").isdigit():  # a named video replaces its previous self
             img_id = int(opts["id"])
@@ -1368,12 +1387,18 @@ class Terminal:
         else:
             img_id, self._next_img_id = self._next_img_id, self._next_img_id + 1
 
+        # Block placement starts on a fresh line at column 0: a shell often emits
+        # the sequence mid-line (right after its prompt), so this keeps the video
+        # from straddling the prompt or landing at whatever column the cursor sat.
+        if self.cursor.x > 0:
+            self.cursor.x = 0
+            self.index()
         # A 1x1 transparent placeholder until the first decoded frame lands; the
         # app then swaps in real pixels (and dimensions) frame by frame.
         top_line = self.first_line_no + len(self.scrollback) + self.cursor.y
         self.images.append(
             ImagePlacement(
-                img_id, top_line, self.cursor.x, cols, rows,
+                img_id, top_line, 0, cols, rows,
                 b"\x00\x00\x00\x00", 1, 1, self.alt_screen, "contain",
             )
         )

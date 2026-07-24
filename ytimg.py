@@ -51,6 +51,28 @@ def load_image(path=None, data=None):
     return image.tobytes(), w, h
 
 
+def video_size(path):
+    """(width, height) of a video file's first video stream, or None.
+
+    Reads container metadata only -- no decoding -- so it's cheap even for a big
+    file, and lets YT;vid aspect-fit its reserved cell box the way YT;img can
+    (the model can't decode the frames itself). Any failure is silent-None.
+    """
+    try:
+        import av
+        with av.open(path) as container:
+            stream = next(
+                (s for s in container.streams if s.type == "video"), None)
+            if stream is None:
+                return None
+            cc = stream.codec_context
+            if cc and cc.width and cc.height:
+                return (int(cc.width), int(cc.height))
+    except Exception:
+        return None
+    return None
+
+
 def _to_px(value, per_cell):
     """A size field -> pixels. '240px' is literal; a bare '24' is 24 cells."""
     value = value.strip().lower()
