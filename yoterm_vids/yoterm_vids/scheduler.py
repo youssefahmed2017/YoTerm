@@ -91,10 +91,10 @@ class Clock:
 @dataclass
 class Stats:
     shown: int = 0
-    skipped: int = 0        # dropped because they were already stale
-    late: int = 0           # shown, but past their deadline
-    max_late: float = 0.0   # worst lateness among shown frames (seconds)
-    wall: float = 0.0       # total wall-clock time the run took (seconds)
+    skipped: int = 0  # dropped because they were already stale
+    late: int = 0  # shown, but past their deadline
+    max_late: float = 0.0  # worst lateness among shown frames (seconds)
+    wall: float = 0.0  # total wall-clock time the run took (seconds)
 
 
 class Scheduler:
@@ -180,7 +180,10 @@ class Scheduler:
         stats.wall = clock.now()
         log.debug(
             "scheduled: shown=%d skipped=%d late=%d max_late=%.1fms wall=%.3fs",
-            stats.shown, stats.skipped, stats.late, stats.max_late * 1000,
+            stats.shown,
+            stats.skipped,
+            stats.late,
+            stats.max_late * 1000,
             stats.wall,
         )
         return stats

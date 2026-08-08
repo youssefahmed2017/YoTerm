@@ -273,7 +273,7 @@ def demo_video():
     # in the background and pushes frames straight into a placement — no
     # per-frame encode or escape round-trip. Any other terminal ignores it.
     cat = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "yoterm-vids", "cat.mp4"
+        os.path.dirname(os.path.abspath(__file__)), "yoterm_vids", "cat.mp4"
     )
     if not os.path.exists(cat):
         print(
@@ -282,8 +282,10 @@ def demo_video():
         )
         return
 
-    note("a real video playing in place — press SPACE to pause/resume it (a ❚❚ "
-         "indicator shows while paused). It keeps playing as the demo goes on.")
+    note(
+        "a real video playing in place — press SPACE to pause/resume it (a ❚❚ "
+        "indicator shows while paused). It keeps playing as the demo goes on."
+    )
     out(yt(f"vid;path:{cat};cols:48;rows:24;id:7;loop:on"))
     # Hold so it's clearly playing; it only moves in YoTerm (a no-op elsewhere).
     # Deliberately not stopped — it loops and keeps playing through the rest.
@@ -402,15 +404,25 @@ def demo_zone_shadows():
     top = pos[0] - 1 - 6
 
     out(zone(f"create;id:13;x:2;y:{top};w:16;h:5;bg:#3366ff;radius:10;shadow:14"))
-    out(zone(f"create;id:14;x:22;y:{top};w:16;h:5;bg:#222233;radius:8;"
-             "border:#ffcc00;border_w:3;shadow:10"))
+    out(
+        zone(
+            f"create;id:14;x:22;y:{top};w:16;h:5;bg:#222233;radius:8;"
+            "border:#ffcc00;border_w:3;shadow:10"
+        )
+    )
     pause(1.6)
 
     note("opacity applies to the WHOLE zone — including its own shadow")
-    out(zone(f"create;id:15;x:42;y:{top};w:16;h:5;bg:#22c55e;radius:8;"
-             "shadow:14;opacity:0.4"))
-    print(f"  {ESC}[2m  ^ half as opaque, and its shadow fades to match — not "
-          f"a fixed-strength shadow underneath{ESC}[0m")
+    out(
+        zone(
+            f"create;id:15;x:42;y:{top};w:16;h:5;bg:#22c55e;radius:8;"
+            "shadow:14;opacity:0.4"
+        )
+    )
+    print(
+        f"  {ESC}[2m  ^ half as opaque, and its shadow fades to match — not "
+        f"a fixed-strength shadow underneath{ESC}[0m"
+    )
     pause(1.8)
 
     note("shadow with no bg/gradient at all: a soft shape, nothing solid on it")
@@ -426,8 +438,10 @@ def demo_zone_shadows():
 
 def demo_zone_clipping():
     title("Zone clipping — clip:on cuts real terminal cells to the zone's shape")
-    note("a rect clip is pixel-identical to no clip (cells don't overflow their "
-         "own bounds) — the visible case is a ROUNDED clip")
+    note(
+        "a rect clip is pixel-identical to no clip (cells don't overflow their "
+        "own bounds) — the visible case is a ROUNDED clip"
+    )
 
     for _ in range(6):
         print()
@@ -448,8 +462,10 @@ def demo_zone_clipping():
     for r in range(4):
         out(f"{ESC}[{top + r + 1};22H" + f"{ESC}[46m" + (" " * 12) + f"{ESC}[0m")
 
-    print(f"  {ESC}[2m  ^ left: clipped (rounded corners cut into the fill) "
-          f"  right: unclipped control (sharp corners){ESC}[0m")
+    print(
+        f"  {ESC}[2m  ^ left: clipped (rounded corners cut into the fill) "
+        f"  right: unclipped control (sharp corners){ESC}[0m"
+    )
     pause(2.2)
 
 

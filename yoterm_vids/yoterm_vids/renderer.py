@@ -74,8 +74,7 @@ class EscapeSink(FrameSink):
     and the visual-inspection path, not real YoTerm (which plays video natively).
     """
 
-    def __init__(self, stream, cell_px=(8, 16), img_id=1, quality=80,
-                 fullscreen=True):
+    def __init__(self, stream, cell_px=(8, 16), img_id=1, quality=80, fullscreen=True):
         self._stream = stream
         self._cw, self._ch = cell_px
         self._id = img_id
@@ -88,8 +87,13 @@ class EscapeSink(FrameSink):
             self._write(protocols.enter_fullscreen())
             self._write(protocols.clear_screen())
         self._flush()
-        log.debug("EscapeSink open, box=%dx%d px, cell=%dx%d",
-                  box[0], box[1], self._cw, self._ch)
+        log.debug(
+            "EscapeSink open, box=%dx%d px, cell=%dx%d",
+            box[0],
+            box[1],
+            self._cw,
+            self._ch,
+        )
 
     def show(self, image, pts):
         # Cell size from the ACTUAL image dimensions (already fitted to the box

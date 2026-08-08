@@ -74,7 +74,7 @@ Image options: `path:` or `data:` (base64), `cols`/`rows`, `w`/`h` (cells or
 
 Video options: `path:`, `cols`/`rows` (the box, defaults to half the screen),
 `loop:on`, and `id:` (for replace / `del`). Decoding, timing and resizing run on
-a worker thread ([`yoterm-vids`](yoterm-vids/)); frames are handed to the
+a worker thread ([`yoterm-vids`](yoterm_vids/)); frames are handed to the
 renderer directly — no per-frame encode or escape-sequence round-trip.
 
 Run the demo inside YoTerm to see them all:
@@ -82,6 +82,29 @@ Run the demo inside YoTerm to see them all:
 ```
 python yt_seq_tests.py
 ```
+
+<table>
+<tr>
+<td valign="top" align="center">
+<img src="https://raw.githubusercontent.com/youssefahmed2017/YoTerm/master/imgs/gradient.png" alt="YoTerm Gradients">
+</td>
+<td valign="top" align="center">
+<img src="https://raw.githubusercontent.com/youssefahmed2017/YoTerm/master/imgs/image.png" alt="YoTerm Images">
+</td>
+<td valign="top" align="center">
+<img src="https://raw.githubusercontent.com/youssefahmed2017/YoTerm/master/imgs/videos.png" alt="YoTerm Vids">
+</td>
+<td valign="top" align="center">
+<img src="https://raw.githubusercontent.com/youssefahmed2017/YoTerm/master/imgs/zones.png" alt="YoTerm Zones">
+</td>
+</tr>
+<tr>
+<td valign="top"><sub><b>Gradients</b> — Real GPU Gradients, not ANSI. Angles, cycles, and more</sub></td>
+<td valign="top"><sub><b>Images</b> — Real GPU images, with inline.</sub></td>
+<td valign="top"><sub><b>Videos</b> — GPU Videos, with seeking, pausing, resuming, all rendered as an image each frame.</sub></td>
+<td valign="top"><sub><b>Zones</b> — GPU Zones with clipping, smooth gradients, rounded corners, and shadows.</sub></td>
+</tr>
+</table>
 
 ## Architecture
 

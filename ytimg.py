@@ -60,9 +60,9 @@ def video_size(path):
     """
     try:
         import av
+
         with av.open(path) as container:
-            stream = next(
-                (s for s in container.streams if s.type == "video"), None)
+            stream = next((s for s in container.streams if s.type == "video"), None)
             if stream is None:
                 return None
             cc = stream.codec_context

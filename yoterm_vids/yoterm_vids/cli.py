@@ -89,9 +89,7 @@ def build_parser():
         help="with --process, save the middle frame here for inspection",
     )
     p.add_argument("-v", "--verbose", action="store_true", help="debug logging")
-    p.add_argument(
-        "--version", action="version", version=f"yoterm-vids {__version__}"
-    )
+    p.add_argument("--version", action="version", version=f"yoterm-vids {__version__}")
     return p
 
 
@@ -180,12 +178,17 @@ def _schedule_frames(path, work_ms, verbose):
 
     log.info(
         "shown=%d skipped=%d late=%d  max_late=%.1fms",
-        stats.shown, stats.skipped, stats.late, stats.max_late * 1000,
+        stats.shown,
+        stats.skipped,
+        stats.late,
+        stats.max_late * 1000,
     )
     if duration:
         log.info(
             "wall=%.3fs  video=%.3fs  end-to-end drift=%+.0fms",
-            stats.wall, duration, (stats.wall - duration) * 1000,
+            stats.wall,
+            duration,
+            (stats.wall - duration) * 1000,
         )
     return 0
 
@@ -227,7 +230,12 @@ def _process_frames(path, size, mode, quality, out):
 
     log.info(
         "processed %d frames  box=%dx%d mode=%s -> output=%dx%d",
-        count, box[0], box[1], mode, first_dims[0], first_dims[1],
+        count,
+        box[0],
+        box[1],
+        mode,
+        first_dims[0],
+        first_dims[1],
     )
     log.info(
         "throughput %.0f frames/s (%.2fms per frame)",
@@ -265,8 +273,13 @@ def _play_video(path, loop):
     sink = EscapeSink(sys.stdout, cell_px=cell, quality=75, fullscreen=True)
     player = Player(path, sink, box, mode="contain", quality="fast", loop=loop)
 
-    log.info("playing %s  %dx%d  %.1fs  (Ctrl+C to quit)",
-             os.path.basename(path), info.width, info.height, info.duration or 0)
+    log.info(
+        "playing %s  %dx%d  %.1fs  (Ctrl+C to quit)",
+        os.path.basename(path),
+        info.width,
+        info.height,
+        info.duration or 0,
+    )
     try:
         player.play()
     except KeyboardInterrupt:
@@ -289,8 +302,9 @@ def _native_video(path, loop):
         yt_video(os.path.abspath(path), cols=cols, rows=max(1, lines - 1), loop=loop)
     )
     sys.stdout.flush()
-    log.info("sent YT;vid for %s (spacebar pauses inside YoTerm)",
-             os.path.basename(path))
+    log.info(
+        "sent YT;vid for %s (spacebar pauses inside YoTerm)", os.path.basename(path)
+    )
     return 0
 
 
@@ -311,9 +325,7 @@ def main(argv=None):
         if args.schedule:
             return _schedule_frames(path, args.work, args.verbose)
         if args.process:
-            return _process_frames(
-                path, args.size, args.mode, args.quality, args.out
-            )
+            return _process_frames(path, args.size, args.mode, args.quality, args.out)
         if args.native:
             return _native_video(path, args.loop)
         if args.play or is_demo:

@@ -20,14 +20,14 @@ class VideoInfo:
     path: str
     file_bytes: int
     container_format: str
-    duration: float | None        # seconds
+    duration: float | None  # seconds
     width: int
     height: int
     codec: str
     pix_fmt: str | None
     avg_fps: float | None
-    frame_count: int | None       # None if the container doesn't report it
-    bit_rate: int | None          # bits/sec
+    frame_count: int | None  # None if the container doesn't report it
+    bit_rate: int | None  # bits/sec
 
 
 @dataclass
@@ -162,8 +162,9 @@ class Decoder:
         if self.info.duration:
             seconds = min(seconds, self.info.duration)
         offset = int(seconds / self._time_base)
-        self._container.seek(offset, stream=self._stream, backward=True,
-                             any_frame=False)
+        self._container.seek(
+            offset, stream=self._stream, backward=True, any_frame=False
+        )
         self._seek_target = seconds
 
     def frames(self):

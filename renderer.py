@@ -12,6 +12,7 @@ attribute it doesn't define itself falls through ``__getattr__`` to the widget.
 Writes that must land back on the widget (repaint-signal flags, the hit-test
 box cache) go through ``self.w`` explicitly.
 """
+
 import math
 import time
 import moderngl
@@ -23,18 +24,21 @@ from tools import RectangleBuilder, cell_rect_px, PALETTE
 # renderer.py has no dependency on app.py -- app.py imports Renderer, and a back
 # dependency would be a circular import (fatal when app.py runs as __main__).
 # Live settings are read per-frame off the widget as ``self.w.config`` instead.
-BG_COLOR = (0.06, 0.06, 0.08)         # terminal background / clear color
+BG_COLOR = (0.06, 0.06, 0.08)  # terminal background / clear color
 SELECTION_COLOR = (0.20, 0.30, 0.52)  # highlight behind selected cells
-DIM_FACTOR = 0.55                     # brightness multiplier for SGR 2 (dim)
-CURSOR_COLOR = (0.90, 0.92, 0.98)     # caret color when fully on
-CURSOR_THICK_PX = 2.0                 # bar/underline weight in *logical* px
+DIM_FACTOR = 0.55  # brightness multiplier for SGR 2 (dim)
+CURSOR_COLOR = (0.90, 0.92, 0.98)  # caret color when fully on
+CURSOR_THICK_PX = 2.0  # bar/underline weight in *logical* px
 
 
 def _lerp(a, b, t):
     """Blend two RGB tuples."""
-    return (a[0] + (b[0] - a[0]) * t,
-            a[1] + (b[1] - a[1]) * t,
-            a[2] + (b[2] - a[2]) * t)
+    return (
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    )
+
 
 # Shared by both shaders below that need a rounded-rect containment test:
 # the main glyph/background program (for clipping to a zone's shape) and the
@@ -321,13 +325,13 @@ void main() {
     if (result.a <= 0.0) discard;
     color = result;
 }
-"""
-    % {"ramp_h": ZONE_RAMP_H}
+""" % {"ramp_h": ZONE_RAMP_H}
 )
 
 # 18 floats per zone instance: pos.xy, size.xy, color.rgba, radius,
 # border.rgba, border_width, angle, ramp_row, shadow, opacity.
 _ZONE_FLOATS = 18
+
 
 class Renderer:
     """Owns the ModernGL context and draws every frame for one TerminalWidget."""
@@ -591,7 +595,6 @@ class Renderer:
 
     # ------------------------------------------------------------ PTY I/O
 
-
     def rebuild_atlas(self):
         """The atlas changed size (a font resize), so the texture can't be
         reused. Just flag it: the actual GL texture is (re)created at the top of
@@ -613,7 +616,6 @@ class Renderer:
         self._atlas_cursor = len(self.atlas.written)
 
     # ------------------------------------------------------------ Damage
-
 
     def _rect(self, x, y):
         return cell_rect_px(x, y, self.cell_w, self.cell_h, self.win_w, self.win_h)
@@ -705,8 +707,8 @@ class Renderer:
         bottom-up logical-px convention the glyph shader's v_frag_px uses."""
         xs, ys, sx, sy = self._grid_tables()
         left_ndc, right_ndc = xs[col0], xs[col1]
-        top_ndc = ys[row0] + sy       # top of the first included row
-        bottom_ndc = ys[row1 - 1]     # bottom of the last included row
+        top_ndc = ys[row0] + sy  # top of the first included row
+        bottom_ndc = ys[row1 - 1]  # bottom of the last included row
         left_px = (left_ndc * 0.5 + 0.5) * self.win_w
         right_px = (right_ndc * 0.5 + 0.5) * self.win_w
         top_px = (top_ndc * 0.5 + 0.5) * self.win_h
@@ -849,10 +851,12 @@ class Renderer:
                         # never forces a full geometry rebuild on every
                         # mouse move -- only content changes do that.
                         dot_w = min(ul_h, rw * 0.22)
-                        add_glyph(rx + rw * 0.14, ry, dot_w, ul_h, fg,
-                                 su0, sv0, su1, sv1)
-                        add_glyph(rx + rw * 0.56, ry, dot_w, ul_h, fg,
-                                 su0, sv0, su1, sv1)
+                        add_glyph(
+                            rx + rw * 0.14, ry, dot_w, ul_h, fg, su0, sv0, su1, sv1
+                        )
+                        add_glyph(
+                            rx + rw * 0.56, ry, dot_w, ul_h, fg, su0, sv0, su1, sv1
+                        )
                     if cell.strike:
                         add_glyph(rx, ry + st_off, rw, st_h, fg, su0, sv0, su1, sv1)
 
@@ -1254,7 +1258,6 @@ class Renderer:
 
     # ------------------------------------------------------------ Native video
 
-
     def _px_to_ndc(self, x, y_top, w, h):
         """A logical-px rect (top-left origin) -> NDC rect (bottom-left origin)."""
         return (
@@ -1274,8 +1277,7 @@ class Renderer:
             self.clip_vbo.orphan()
         self.clip_vbo.write(data)
 
-    def _overlay_quad(self, builder, x, y_top, w, h, color, mode=0.0,
-                      uv=None):
+    def _overlay_quad(self, builder, x, y_top, w, h, color, mode=0.0, uv=None):
         nl, nb, nw, nh = self._px_to_ndc(x, y_top, w, h)
         if uv is None:
             uv = self.atlas.solid_uv()
@@ -1291,8 +1293,7 @@ class Renderer:
         # bottom — so flip the centre's y from the top-left px we drew with.
         self.program["u_win"] = (self.win_w, self.win_h)
         self.program["u_clip_round"] = 1.0
-        self.program["u_clip_center"] = (x + w * 0.5,
-                                         self.win_h - (y_top + h * 0.5))
+        self.program["u_clip_center"] = (x + w * 0.5, self.win_h - (y_top + h * 0.5))
         self.program["u_clip_half"] = (w * 0.5, h * 0.5)
         self.program["u_clip_radius"] = min(w, h) * 0.5 * radius_frac
         self._clip_write(b.buffer())
@@ -1306,15 +1307,22 @@ class Renderer:
         gw = h * self.cell_w / self.cell_h
         for ch in text:
             u0, v0, u1, v1, is_color = self.atlas.cell_uv(ch)
-            self._overlay_quad(builder, x, y_top, gw, h, color,
-                               mode=1.0 if is_color else 0.0,
-                               uv=(u0, v0, u1, v1))
+            self._overlay_quad(
+                builder,
+                x,
+                y_top,
+                gw,
+                h,
+                color,
+                mode=1.0 if is_color else 0.0,
+                uv=(u0, v0, u1, v1),
+            )
             x += gw
 
     def _text_w(self, text, h):
         return len(text) * h * self.cell_w / self.cell_h
 
-    OV_TRAIL = (0.78, 0.78, 0.80)   # light hover-ahead trail on the scrubber
+    OV_TRAIL = (0.78, 0.78, 0.80)  # light hover-ahead trail on the scrubber
 
     def _thumb_texture(self, vid):
         """The GPU texture for a video's scrub-preview thumbnail, (re)built from
@@ -1337,10 +1345,35 @@ class Renderer:
         """Draw a thumbnail texture (unit 1, its own program) as one quad."""
         nl, nb, nw, nh = self._px_to_ndc(x, y_top, w, h)
         r2, t2 = nl + nw, nb + nh
-        quad = array("f", (
-            nl, nb, 0.0, 1.0, r2, nb, 1.0, 1.0, r2, t2, 1.0, 0.0,
-            nl, nb, 0.0, 1.0, r2, t2, 1.0, 0.0, nl, t2, 0.0, 0.0,
-        ))
+        quad = array(
+            "f",
+            (
+                nl,
+                nb,
+                0.0,
+                1.0,
+                r2,
+                nb,
+                1.0,
+                1.0,
+                r2,
+                t2,
+                1.0,
+                0.0,
+                nl,
+                nb,
+                0.0,
+                1.0,
+                r2,
+                t2,
+                1.0,
+                0.0,
+                nl,
+                t2,
+                0.0,
+                0.0,
+            ),
+        )
         tex.use(1)
         self.img_vbo.orphan()
         self.img_vbo.write(quad)
@@ -1366,8 +1399,7 @@ class Renderer:
                 continue  # its overlay is drawn by _render_fullscreen_video
             ctrl = self._videos.get(vid)
             if ctrl is not None:
-                self._render_one_overlay(vid, ctrl, l, t, r, b,
-                                         controls_on, flash_on)
+                self._render_one_overlay(vid, ctrl, l, t, r, b, controls_on, flash_on)
 
     def _render_fullscreen_video(self):
         """Draw the fullscreen video over everything: opaque black across the
@@ -1395,9 +1427,9 @@ class Renderer:
 
         # 2. The frame, aspect-fit (letterboxed) into the viewport and centred.
         aspect = im.iw / im.ih
-        if W / H > aspect:      # viewport is wider: fit to height
+        if W / H > aspect:  # viewport is wider: fit to height
             fh, fw = H, H * aspect
-        else:                   # fit to width
+        else:  # fit to width
             fw, fh = W, W / aspect
         x, y = (W - fw) * 0.5, (H - fh) * 0.5
         self._overlay_thumb(tex, x, y, fw, fh)
@@ -1409,9 +1441,16 @@ class Renderer:
         if ctrl is not None:
             self.texture.use()
             now = time.monotonic()
-            self._render_one_overlay(vid, ctrl, l, t, r, b,
-                                     now < self._controls_until,
-                                     now < self._seek_flash_until)
+            self._render_one_overlay(
+                vid,
+                ctrl,
+                l,
+                t,
+                r,
+                b,
+                now < self._controls_until,
+                now < self._seek_flash_until,
+            )
 
     def _render_one_overlay(self, vid, ctrl, l, t, r, b, controls_on, flash_on):
         w, h = r - l, b - t
@@ -1419,16 +1458,19 @@ class Renderer:
         pos = ctrl.position
         frac = max(0.0, min(1.0, pos / dur)) if dur > 0 else 0.0
         paused = ctrl.paused
-        full = paused or controls_on          # scrubber + time + handle
-        flash = flash_on and not full         # bare red line + timestamp + dot
+        full = paused or controls_on  # scrubber + time + handle
+        flash = flash_on and not full  # bare red line + timestamp + dot
         tl, tr, tw, ty, th = self._scrubber_geom(l, t, r, b)
         txt_h = min(max(9.0, h * 0.035), 15.0)  # capped so it stays compact
         pad = txt_h * 0.55
         chip_y = ty - th * 0.5 - txt_h - pad * 1.8  # time chips sit above the bar
 
         # Where the cursor sits along the bar (for the hover trail + preview).
-        hovering = (full and self._video_hover == ctrl.img_id
-                    and self._video_hover_px is not None)
+        hovering = (
+            full
+            and self._video_hover == ctrl.img_id
+            and self._video_hover_px is not None
+        )
         hx = hf = None
         if hovering:
             hx = min(max(self._video_hover_px, tl), tr)
@@ -1437,35 +1479,53 @@ class Renderer:
         # --- rounded backgrounds first: they sit UNDER the flat batch ---
         if paused:
             rad = min(min(w, h) * 0.11, 46.0)
-            self._overlay_round(l + w / 2 - rad, t + h / 2 - rad,
-                                2 * rad, 2 * rad, self.OV_DARK, 1.0)
+            self._overlay_round(
+                l + w / 2 - rad, t + h / 2 - rad, 2 * rad, 2 * rad, self.OV_DARK, 1.0
+            )
             bw, bh, gap = rad * 0.28, rad * 0.9, rad * 0.30
             by = t + h / 2 - bh / 2
-            self._overlay_round(l + w / 2 - gap / 2 - bw, by, bw, bh,
-                                self.OV_WHITE, 0.9)
-            self._overlay_round(l + w / 2 + gap / 2, by, bw, bh,
-                                self.OV_WHITE, 0.9)
+            self._overlay_round(
+                l + w / 2 - gap / 2 - bw, by, bw, bh, self.OV_WHITE, 0.9
+            )
+            self._overlay_round(l + w / 2 + gap / 2, by, bw, bh, self.OV_WHITE, 0.9)
 
         preview = None  # (text, centre_x) for a scrub-preview timestamp
         if hovering:
             label = self._fmt_time(hf * dur)
             lw = self._text_w(label, txt_h)
             cx = min(max(hx, tl + lw / 2 + pad), tr - lw / 2 - pad)
-            self._overlay_round(cx - lw / 2 - pad, chip_y - pad * 0.4,
-                                lw + 2 * pad, txt_h + pad * 0.8, self.OV_DARK, 0.6)
+            self._overlay_round(
+                cx - lw / 2 - pad,
+                chip_y - pad * 0.4,
+                lw + 2 * pad,
+                txt_h + pad * 0.8,
+                self.OV_DARK,
+                0.6,
+            )
             preview = (label, cx)
 
         time_label = None
         if full:
             time_label = f"{self._fmt_time(pos)} / {self._fmt_time(dur)}"
-            self._overlay_round(tl - pad * 0.5, chip_y - pad * 0.4,
-                                self._text_w(time_label, txt_h) + pad,
-                                txt_h + pad * 0.8, self.OV_DARK, 0.6)
+            self._overlay_round(
+                tl - pad * 0.5,
+                chip_y - pad * 0.4,
+                self._text_w(time_label, txt_h) + pad,
+                txt_h + pad * 0.8,
+                self.OV_DARK,
+                0.6,
+            )
         elif flash:
             time_label = f"{self._fmt_time(pos)} / {self._fmt_time(dur)}"
             fw = self._text_w(time_label, txt_h)
-            self._overlay_round(l + w / 2 - fw / 2 - pad, chip_y - pad * 0.4,
-                                fw + 2 * pad, txt_h + pad * 0.8, self.OV_DARK, 0.6)
+            self._overlay_round(
+                l + w / 2 - fw / 2 - pad,
+                chip_y - pad * 0.4,
+                fw + 2 * pad,
+                txt_h + pad * 0.8,
+                self.OV_DARK,
+                0.6,
+            )
 
         # --- flat batch: track, hover trail, progress, glyphs (one draw) ---
         flat = RectangleBuilder()
@@ -1475,34 +1535,44 @@ class Renderer:
             # light hover-ahead trail (YouTube's grey fill toward the cursor),
             # under the red so the red always marks the true position
             if hovering and hf > frac:
-                self._overlay_quad(flat, tl, ty - th / 2, tw * hf, th,
-                                   self.OV_TRAIL)
+                self._overlay_quad(flat, tl, ty - th / 2, tw * hf, th, self.OV_TRAIL)
             self._overlay_quad(flat, tl, ty - th / 2, tw * frac, th, self.OV_RED)
         if full:
-            self._overlay_text(flat, time_label, tl + pad * 0.5,
-                               chip_y, txt_h, self.OV_WHITE)
+            self._overlay_text(
+                flat, time_label, tl + pad * 0.5, chip_y, txt_h, self.OV_WHITE
+            )
             if preview is not None:
-                self._overlay_text(flat, preview[0],
-                                   preview[1] - self._text_w(preview[0], txt_h) / 2,
-                                   chip_y, txt_h, self.OV_WHITE)
+                self._overlay_text(
+                    flat,
+                    preview[0],
+                    preview[1] - self._text_w(preview[0], txt_h) / 2,
+                    chip_y,
+                    txt_h,
+                    self.OV_WHITE,
+                )
         elif flash:
-            self._overlay_text(flat, time_label, l + w / 2
-                               - self._text_w(time_label, txt_h) / 2,
-                               chip_y, txt_h, self.OV_WHITE)
+            self._overlay_text(
+                flat,
+                time_label,
+                l + w / 2 - self._text_w(time_label, txt_h) / 2,
+                chip_y,
+                txt_h,
+                self.OV_WHITE,
+            )
         if flat.count:
             self.program["u_win"] = (self.win_w, self.win_h)
             self.program["u_clip_round"] = 0.0
             self._clip_write(flat.buffer())
-            self.clip_vao.render(moderngl.TRIANGLES, vertices=6,
-                                 instances=flat.count)
+            self.clip_vao.render(moderngl.TRIANGLES, vertices=6, instances=flat.count)
 
         # --- handle dot on the progress fill (───────●───────), rounded ---
         # Shown on a seek flash too, so a keyboard/click seek reads as YouTube's
         # scrubber-with-handle, not just a bare line.
         if full or flash:
             hr = min(max(th * 1.4, 5.0), 8.0)
-            self._overlay_round(tl + tw * frac - hr, ty - hr, 2 * hr, 2 * hr,
-                                self.OV_RED, 1.0)
+            self._overlay_round(
+                tl + tw * frac - hr, ty - hr, 2 * hr, 2 * hr, self.OV_RED, 1.0
+            )
 
         # --- scrub-preview thumbnail floating above the cursor ---
         if hovering:
@@ -1521,10 +1591,10 @@ class Renderer:
         x = cx - disp_w / 2
         y = max(3.0, above_y - disp_h)
         bd = 2.5  # dark frame thickness
-        self._overlay_round(x - bd, y - bd, disp_w + 2 * bd, disp_h + 2 * bd,
-                            self.OV_DARK, 0.28)
+        self._overlay_round(
+            x - bd, y - bd, disp_w + 2 * bd, disp_h + 2 * bd, self.OV_DARK, 0.28
+        )
         self._overlay_thumb(tex, x, y, disp_w, disp_h)
-
 
     def _add_cursor(self, builder):
         if not self.w.config.cursor:
@@ -1602,7 +1672,6 @@ class Renderer:
 
     # ------------------------------------------------------------ Selection
 
-
     def _add_hover_link(self, builder):
         """Underline every cell sharing the currently-hovered OSC 8 target, so
         a link spanning multiple cells (or wrapped onto more than one line)
@@ -1652,4 +1721,3 @@ class Renderer:
                 u1=su1,
                 v1=sv1,
             )
-

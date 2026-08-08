@@ -33,7 +33,8 @@ class AudioDecoder:
     def __init__(self, path, rate=None, layout="stereo", fmt="s16"):
         self._container = av.open(path)
         self._stream = next(
-            (s for s in self._container.streams if s.type == "audio"), None)
+            (s for s in self._container.streams if s.type == "audio"), None
+        )
         if self._stream is None:
             self._container.close()
             raise ValueError("no audio stream")
@@ -46,8 +47,7 @@ class AudioDecoder:
         self._resampler = self._new_resampler()
 
     def _new_resampler(self):
-        return av.AudioResampler(format=self.fmt, layout=self.layout,
-                                 rate=self.rate)
+        return av.AudioResampler(format=self.fmt, layout=self.layout, rate=self.rate)
 
     def frames(self):
         """Yield ``(pcm_bytes, pts_seconds)`` for each resampled chunk to EOF.
@@ -57,8 +57,11 @@ class AudioDecoder:
         ``fmt`` — ready to hand straight to a device.
         """
         for frame in self._container.decode(self._stream):
-            pts = (float(frame.pts * frame.time_base)
-                   if frame.pts is not None and frame.time_base else 0.0)
+            pts = (
+                float(frame.pts * frame.time_base)
+                if frame.pts is not None and frame.time_base
+                else 0.0
+            )
             for r in self._resampler.resample(frame):
                 yield r.to_ndarray().tobytes(), pts
 
@@ -66,8 +69,7 @@ class AudioDecoder:
         """Reposition to ``seconds`` (keyframe-backward), flushing the resampler
         so no pre-seek samples leak into the first post-seek chunk."""
         ts = int(max(0.0, seconds) / self._tb)
-        self._container.seek(ts, stream=self._stream, backward=True,
-                             any_frame=False)
+        self._container.seek(ts, stream=self._stream, backward=True, any_frame=False)
         self._resampler = self._new_resampler()
 
     def close(self):

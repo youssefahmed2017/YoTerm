@@ -1359,8 +1359,9 @@ class Terminal:
                 return default
 
         max_cols = min(_dim(opts.get("cols"), max(1, self.width // 2)), self.width)
-        max_rows = min(_dim(opts.get("rows"), max(1, self.height // 2)),
-                       max(1, self.height))
+        max_rows = min(
+            _dim(opts.get("rows"), max(1, self.height // 2)), max(1, self.height)
+        )
         # Aspect-fit the reserved box to the video's real size (probed cheaply
         # from the file's metadata) so cols/rows act as a *bounding box*, like
         # YT;img: a 16:9 clip in a 48x24 box reserves ~48x13, not 48x24 with big
@@ -1374,7 +1375,7 @@ class Terminal:
             box_w, box_h = max_cols * cw, max_rows * ch
             if box_w / box_h > aspect:  # box wider than the video: fit to height
                 fit_h, fit_w = box_h, box_h * aspect
-            else:                       # fit to width
+            else:  # fit to width
                 fit_w, fit_h = box_w, box_w / aspect
             cols = max(1, min(max_cols, round(fit_w / cw)))
             rows = max(1, min(max_rows, round(fit_h / ch)))
@@ -1398,8 +1399,16 @@ class Terminal:
         top_line = self.first_line_no + len(self.scrollback) + self.cursor.y
         self.images.append(
             ImagePlacement(
-                img_id, top_line, 0, cols, rows,
-                b"\x00\x00\x00\x00", 1, 1, self.alt_screen, "contain",
+                img_id,
+                top_line,
+                0,
+                cols,
+                rows,
+                b"\x00\x00\x00\x00",
+                1,
+                1,
+                self.alt_screen,
+                "contain",
             )
         )
         # Reserve the rows, exactly like a block image.

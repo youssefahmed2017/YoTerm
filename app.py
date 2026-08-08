@@ -453,6 +453,7 @@ class _QtAudioSink(QtCore.QObject):
     def _open_gui(self, rate, channels):
         try:
             from PySide6.QtMultimedia import QAudioFormat, QAudioSink
+
             fmt = QAudioFormat()
             fmt.setSampleRate(rate)
             fmt.setChannelCount(channels)
@@ -513,11 +514,11 @@ class _VideoController(QtCore.QObject):
         # lazily on the first hover so plain playback pays nothing for it.
         self._thumb_thread = None
         self._thumb_cond = threading.Condition()
-        self._thumb_req = None      # latest requested seconds (coalesced)
+        self._thumb_req = None  # latest requested seconds (coalesced)
         self._thumb_stop = False
         try:
-            from yoterm_vids.player import Player
-            from yoterm_vids.renderer import CallbackSink
+            from yoterm_vids.yoterm_vids.player import Player
+            from yoterm_vids.yoterm_vids.renderer import CallbackSink
         except Exception as exc:  # package / PyAV not installed
             print(f"YT;vid: video engine unavailable ({exc})", file=sys.stderr)
             self.player = None
@@ -531,8 +532,15 @@ class _VideoController(QtCore.QObject):
         # never touch QtMultimedia).
         self._audio = _QtAudioSink(parent=self)
         self._audio.set_muted(mute)
-        self.player = Player(path, sink, box, mode="contain", quality="fast",
-                             loop=loop, audio_sink=self._audio)
+        self.player = Player(
+            path,
+            sink,
+            box,
+            mode="contain",
+            quality="fast",
+            loop=loop,
+            audio_sink=self._audio,
+        )
         self._ok = True
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -582,8 +590,7 @@ class _VideoController(QtCore.QObject):
         # (pixel_format="rgba"), already sized for the box -- post it to the GUI
         # thread with no conversion.
         rgba, w, h = frame
-        self._safe_emit(
-            lambda: self.frameReady.emit(self.img_id, rgba, w, h))
+        self._safe_emit(lambda: self.frameReady.emit(self.img_id, rgba, w, h))
 
     @property
     def paused(self):
@@ -636,7 +643,8 @@ class _VideoController(QtCore.QObject):
             self._thumb_req = seconds
             if self._thumb_thread is None:
                 self._thumb_thread = threading.Thread(
-                    target=self._thumb_run, daemon=True)
+                    target=self._thumb_run, daemon=True
+                )
                 self._thumb_thread.start()
             self._thumb_cond.notify_all()
 
@@ -644,10 +652,10 @@ class _VideoController(QtCore.QObject):
         import av
         from fractions import Fraction
         from PIL import Image
+
         try:
             container = av.open(self.path)
-            stream = next((s for s in container.streams
-                           if s.type == "video"), None)
+            stream = next((s for s in container.streams if s.type == "video"), None)
             if stream is None:
                 container.close()
                 return
@@ -669,8 +677,12 @@ class _VideoController(QtCore.QObject):
                     continue
                 last = req
                 try:
-                    container.seek(int(max(0.0, req) / tb), stream=stream,
-                                   backward=True, any_frame=False)
+                    container.seek(
+                        int(max(0.0, req) / tb),
+                        stream=stream,
+                        backward=True,
+                        any_frame=False,
+                    )
                     frame = next(container.decode(stream), None)
                     if frame is None:
                         continue
@@ -679,8 +691,9 @@ class _VideoController(QtCore.QObject):
                     th = max(1, round(img.height * tw / img.width))
                     img = img.resize((tw, th), Image.BILINEAR)
                     rgba = img.convert("RGBA").tobytes()
-                    self._safe_emit(lambda: self.thumbReady.emit(
-                        self.img_id, req, rgba, tw, th))
+                    self._safe_emit(
+                        lambda: self.thumbReady.emit(self.img_id, req, rgba, tw, th)
+                    )
                 except Exception:
                     continue
         finally:
@@ -728,8 +741,10 @@ class TerminalWidget(QOpenGLWidget):
         # stream frames into that placement. img_id -> _VideoController.
         self._videos = {}
         self._muted = False  # tab-wide audio mute (the `m` key); new videos inherit it
-        self._fullscreen_vid = None  # id of the video filling the whole terminal, or None
-        self._fs_saved_box = {}      # vid -> original (w_px, h_px) to restore on exit
+        self._fullscreen_vid = (
+            None  # id of the video filling the whole terminal, or None
+        )
+        self._fs_saved_box = {}  # vid -> original (w_px, h_px) to restore on exit
         # YouTube-style playback overlay. It's drawn on top of the video frame
         # and is otherwise invisible, so playback stays clean until you interact.
         #   _video_boxes    vid -> (l, top, r, bottom) px, refreshed each paint
@@ -740,13 +755,13 @@ class TerminalWidget(QOpenGLWidget):
         #   _seek_flash_until  a bare timestamp + red progress line flashes until
         #                   here after a keyboard/scrub seek, even without hover.
         self._video_boxes = {}
-        self._video_hover = None      # vid under the cursor, or None
-        self._video_hover_px = None   # cursor x (px) for the scrub-preview time
+        self._video_hover = None  # vid under the cursor, or None
+        self._video_hover_px = None  # cursor x (px) for the scrub-preview time
         self._controls_until = 0.0
         self._seek_flash_until = 0.0
         # Scrub-preview thumbnails: the decoder posts the latest frame here; the
         # renderer uploads it to a GPU texture lazily during paint.
-        self._thumbs = {}         # vid -> (rgba, w, h, seq)
+        self._thumbs = {}  # vid -> (rgba, w, h, seq)
         self._thumb_seq = 0
 
         # Damage tracking. The renderer only rebuilds the screen's cached
@@ -980,11 +995,15 @@ class TerminalWidget(QOpenGLWidget):
         vid = req["id"]
         if vid in self._videos:  # a replacing YT;vid with the same id
             self._videos.pop(vid).stop()
-        box = (max(1, req["cols"] * self.cell_w),
-               max(1, req["rows"] * self.cell_h))
-        ctrl = _VideoController(vid, req["path"], box, req["loop"],
-                                mute=req.get("mute", False) or self._muted,
-                                parent=self)
+        box = (max(1, req["cols"] * self.cell_w), max(1, req["rows"] * self.cell_h))
+        ctrl = _VideoController(
+            vid,
+            req["path"],
+            box,
+            req["loop"],
+            mute=req.get("mute", False) or self._muted,
+            parent=self,
+        )
         ctrl.frameReady.connect(self._on_video_frame, Qt.QueuedConnection)
         ctrl.finished.connect(self._on_video_finished, Qt.QueuedConnection)
         ctrl.thumbReady.connect(self._on_thumb, Qt.QueuedConnection)
@@ -1068,8 +1087,10 @@ class TerminalWidget(QOpenGLWidget):
             return
         im = next((i for i in self.term.images if i.id == vid), None)
         if im is not None:
-            self._fs_saved_box[vid] = (max(1, im.cols * self.cell_w),
-                                       max(1, im.rows * self.cell_h))
+            self._fs_saved_box[vid] = (
+                max(1, im.cols * self.cell_w),
+                max(1, im.rows * self.cell_h),
+            )
         self._fullscreen_vid = vid
         ctrl.resize_box((max(1, self.win_w), max(1, self.win_h)))
         self._controls_until = time.monotonic() + 2.5
@@ -1128,10 +1149,10 @@ class TerminalWidget(QOpenGLWidget):
     # (u_clip_round) — one small draw each, which is nothing for the handful of
     # widgets an overlay has.
 
-    OV_TRACK = (0.52, 0.52, 0.56)   # unfilled scrubber
-    OV_RED = (0.92, 0.11, 0.16)     # progress + handle (YouTube red)
-    OV_WHITE = (0.95, 0.95, 0.97)   # text / pause bars
-    OV_DARK = (0.08, 0.08, 0.10)    # scrims behind glyphs/text
+    OV_TRACK = (0.52, 0.52, 0.56)  # unfilled scrubber
+    OV_RED = (0.92, 0.11, 0.16)  # progress + handle (YouTube red)
+    OV_WHITE = (0.95, 0.95, 0.97)  # text / pause bars
+    OV_DARK = (0.08, 0.08, 0.10)  # scrims behind glyphs/text
 
     @staticmethod
     def _fmt_time(seconds):
@@ -1164,11 +1185,11 @@ class TerminalWidget(QOpenGLWidget):
             if im.fit == "contain" and im.iw and im.ih:
                 bw, bh = r - l, b - t
                 img_a = im.iw / im.ih
-                if bh > 0 and img_a > bw / bh:      # letterbox top/bottom
+                if bh > 0 and img_a > bw / bh:  # letterbox top/bottom
                     nh = bw / img_a
                     cy = (t + b) / 2
                     t, b = cy - nh / 2, cy + nh / 2
-                elif bh > 0:                         # pillarbox left/right
+                elif bh > 0:  # pillarbox left/right
                     nw = bh * img_a
                     cx = (l + r) / 2
                     l, r = cx - nw / 2, cx + nw / 2
@@ -1407,7 +1428,8 @@ class TerminalWidget(QOpenGLWidget):
         if self._report_mouse(event, shift):
             return
         if event.button() == Qt.LeftButton and self._try_scrubber_seek(
-                event.position()):
+            event.position()
+        ):
             return  # clicked the video's scrubber: seek, don't select
         if event.button() == Qt.LeftButton:
             # Always start a potential selection, even over linked text --

@@ -27,8 +27,16 @@ _AUDIO_BUFFER_TARGET = 0.25
 
 
 class Player:
-    def __init__(self, path, sink, box, mode="contain", quality="smooth",
-                 loop=False, audio_sink=None):
+    def __init__(
+        self,
+        path,
+        sink,
+        box,
+        mode="contain",
+        quality="smooth",
+        loop=False,
+        audio_sink=None,
+    ):
         self.path = path
         self.sink = sink
         self.box = (int(box[0]), int(box[1]))
@@ -42,20 +50,20 @@ class Player:
         self.clock = Clock()
         self.stats = None
         self._interval = 1.0 / 25.0  # frame interval; set once the decoder opens
-        self._position = 0.0         # pts of the last shown frame (for rel. seek)
+        self._position = 0.0  # pts of the last shown frame (for rel. seek)
         try:
             self._duration = probe(path).duration or 0.0
         except Exception:
-            self._duration = 0.0     # unknown; percentage seeks clamp to 0
+            self._duration = 0.0  # unknown; percentage seeks clamp to 0
 
         # One Condition guards the transport state and parks the playback loop
         # while paused — no lost wakeups, and zero CPU when idle (cond.wait
         # releases the lock and blocks rather than polling).
         self._cond = threading.Condition()
         self._paused = False
-        self._stop = threading.Event()      # end playback for good
-        self._step = threading.Event()      # advance one frame while paused
-        self._pending = None                # a seek target (seconds), or None
+        self._stop = threading.Event()  # end playback for good
+        self._step = threading.Event()  # advance one frame while paused
+        self._pending = None  # a seek target (seconds), or None
 
         # Audio feed coordination (only used when audio is active). The video
         # loop drives every reposition (seek + loop) by bumping _audio_epoch;
@@ -64,7 +72,7 @@ class Player:
         self._audio_thread = None
         self._audio_target = 0.0
         self._audio_epoch = 0
-        self._pending_box = None            # a resize target box, applied next frame
+        self._pending_box = None  # a resize target box, applied next frame
 
     def resize(self, box):
         """Change the output box mid-playback (e.g. fullscreen). The next frame
@@ -169,8 +177,7 @@ class Player:
         """Park the playback loop while paused (clock already frozen); let a
         single frame through on a step request, then park again."""
         with self._cond:
-            while (self._paused and not self._stop.is_set()
-                   and self._pending is None):
+            while self._paused and not self._stop.is_set() and self._pending is None:
                 if self._step.is_set():
                     self._step.clear()
                     # Nudge the clock so the held frame's deadline has arrived:
@@ -196,8 +203,7 @@ class Player:
         self._audio_on = self.audio_sink is not None and has_audio(self.path)
         if self._audio_on:
             self.clock = AudioClock(self.audio_sink)
-            self._audio_thread = threading.Thread(target=self._audio_loop,
-                                                   daemon=True)
+            self._audio_thread = threading.Thread(target=self._audio_loop, daemon=True)
             self._audio_thread.start()
         try:
             with Decoder(self.path) as dec:
@@ -217,8 +223,7 @@ class Player:
                     if box is not None:
                         self._pending_box = None
                         self.box = box
-                        proc[0] = FrameProcessor(box, self.mode, self.quality,
-                                                 out=out)
+                        proc[0] = FrameProcessor(box, self.mode, self.quality, out=out)
                     self._position = frame.pts
                     self.sink.show(proc[0].process(frame.av_frame), frame.pts)
 
@@ -230,7 +235,9 @@ class Player:
                             self._audio_reposition(target)  # keep audio in step
                     self.clock.reset()
                     self.stats = sched.run(
-                        dec.frames(), present, clock=self.clock,
+                        dec.frames(),
+                        present,
+                        clock=self.clock,
                         should_stop=self._should_break,
                         pause_gate=self._wait_if_paused,
                     )

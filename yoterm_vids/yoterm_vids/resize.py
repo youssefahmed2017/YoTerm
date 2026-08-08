@@ -76,15 +76,16 @@ class FrameProcessor:
         iw, ih = av_frame.width, av_frame.height
         w, h, crop = target_dims(iw, ih, self.box_w, self.box_h, self.mode)
         if (w, h) != (iw, ih):
-            conv = av_frame.reformat(width=w, height=h, format=self._fmt,
-                                     interpolation=self.interp)
+            conv = av_frame.reformat(
+                width=w, height=h, format=self._fmt, interpolation=self.interp
+            )
         else:  # already the right size: convert only
             conv = av_frame.reformat(format=self._fmt)
         arr = conv.to_ndarray()  # (h, w, 3) for rgb24, (h, w, 4) for rgba
         if crop:  # cover: trim the overflow so we land exactly on the box
             left = (w - self.box_w) // 2
             top = (h - self.box_h) // 2
-            arr = arr[top:top + self.box_h, left:left + self.box_w]
+            arr = arr[top : top + self.box_h, left : left + self.box_w]
         if self.out == "rgba":
             return arr.tobytes(), arr.shape[1], arr.shape[0]
         return Image.fromarray(arr, "RGB")
